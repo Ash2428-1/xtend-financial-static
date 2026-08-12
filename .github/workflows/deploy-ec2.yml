@@ -26,8 +26,9 @@ jobs:
             echo "=== Pulling latest code ==="
             cd /tmp
             curl -fsSL -o index.html https://raw.githubusercontent.com/Ash2428-1/xtend-financial-static/main/index.html
-            sudo mv index.html /var/www/staging.fin.xtend.co/
-            sudo chown www-data:www-data /var/www/staging.fin.xtend.co/index.html
+            curl -fsSL -o auth.js https://raw.githubusercontent.com/Ash2428-1/xtend-financial-static/main/auth.js
+            sudo mv index.html auth.js /var/www/staging.fin.xtend.co/
+            sudo chown www-data:www-data /var/www/staging.fin.xtend.co/index.html /var/www/staging.fin.xtend.co/auth.js
             echo "=== Reloading Nginx ==="
             sudo nginx -t && sudo systemctl reload nginx
             echo "=== Done ==="
