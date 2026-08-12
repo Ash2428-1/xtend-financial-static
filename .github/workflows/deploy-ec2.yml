@@ -1,0 +1,43 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to AWS EC2 (af-south-1)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          source: "index.html"
+          target: "/var/www/staging.fin.xtend.co/"
+          strip_components: 0
+          overwrite: true
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            echo "=== File deployed ==="
+            ls -la /var/www/staging.fin.xtend.co/
+            echo "=== Nginx config test ==="
+            sudo nginx -t
+            echo "=== Reloading Nginx ==="
+            sudo systemctl reload nginx
+            echo "=== Done ==="
