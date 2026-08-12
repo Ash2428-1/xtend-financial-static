@@ -4,8 +4,8 @@
    ============================================================================ */
 
 const COGNITO_CONFIG = {
-  UserPoolId: 'USER_POOL_ID_PLACEHOLDER',
-  ClientId: 'CLIENT_ID_PLACEHOLDER',
+  UserPoolId: 'af-south-1_qovY6omk5',
+  ClientId: '68lpnp93lshbhcu2jvf1cgce6b',
   Region: 'af-south-1'
 };
 
