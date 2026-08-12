@@ -62,6 +62,41 @@ async function cognitoAuth(email, password) {
   throw new Error(data.message || 'Authentication failed');
 }
 
+async function cognitoForgotPassword(email) {
+  const url = `https://cognito-idp.${COGNITO_CONFIG.Region}.amazonaws.com/`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.ForgotPassword'
+    },
+    body: JSON.stringify({ ClientId: COGNITO_CONFIG.ClientId, Username: email })
+  });
+  const data = await res.json();
+  if (data.CodeDeliveryDetails) return data;
+  throw new Error(data.message || 'Failed to send reset code');
+}
+
+async function cognitoConfirmForgotPassword(email, code, newPassword) {
+  const url = `https://cognito-idp.${COGNITO_CONFIG.Region}.amazonaws.com/`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.ConfirmForgotPassword'
+    },
+    body: JSON.stringify({
+      ClientId: COGNITO_CONFIG.ClientId,
+      Username: email,
+      ConfirmationCode: code,
+      Password: newPassword
+    })
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.message || 'Failed to reset password');
+  return data;
+}
+
 async function getUserAttributes(accessToken) {
   const url = `https://cognito-idp.${COGNITO_CONFIG.Region}.amazonaws.com/`;
   const res = await fetch(url, {
@@ -179,6 +214,76 @@ function xtendAuthCheck() {
   showUserInfo(email, role);
 }
 
+/* --------------------------------------------------------------------------
+   Forgot Password Flow
+   -------------------------------------------------------------------------- */
+async function xtendAuthForgotPassword() {
+  const email = document.getElementById('fp-email').value.trim();
+  const errorEl = document.getElementById('fp-error');
+  const successEl = document.getElementById('fp-success');
+
+  try {
+    await cognitoForgotPassword(email);
+    if (errorEl) errorEl.textContent = '';
+    if (successEl) successEl.textContent = 'Reset code sent! Check your email.';
+    setTimeout(() => showResetPasswordForm(email), 1500);
+  } catch (err) {
+    if (errorEl) errorEl.textContent = err.message || 'Failed to send reset code';
+    if (successEl) successEl.textContent = '';
+  }
+}
+
+async function xtendAuthConfirmReset() {
+  const email = document.getElementById('rp-email').value.trim();
+  const code = document.getElementById('rp-code').value.trim();
+  const password = document.getElementById('rp-password').value;
+  const confirm = document.getElementById('rp-confirm').value;
+  const errorEl = document.getElementById('rp-error');
+  const successEl = document.getElementById('rp-success');
+
+  if (password !== confirm) {
+    if (errorEl) errorEl.textContent = 'Passwords do not match';
+    return;
+  }
+  if (password.length < 8) {
+    if (errorEl) errorEl.textContent = 'Password must be at least 8 characters';
+    return;
+  }
+
+  try {
+    await cognitoConfirmForgotPassword(email, code, password);
+    if (errorEl) errorEl.textContent = '';
+    if (successEl) successEl.textContent = 'Password reset successful! You can now log in.';
+    setTimeout(() => showLoginForm(), 2000);
+  } catch (err) {
+    if (errorEl) errorEl.textContent = err.message || 'Failed to reset password';
+    if (successEl) successEl.textContent = '';
+  }
+}
+
+function showLoginForm() {
+  document.getElementById('login-form').style.display = 'block';
+  document.getElementById('forgot-form').style.display = 'none';
+  document.getElementById('reset-form').style.display = 'none';
+}
+
+function showForgotForm() {
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('forgot-form').style.display = 'block';
+  document.getElementById('reset-form').style.display = 'none';
+}
+
+function showResetPasswordForm(email) {
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('forgot-form').style.display = 'none';
+  document.getElementById('reset-form').style.display = 'block';
+  const emailField = document.getElementById('rp-email');
+  if (emailField && email) emailField.value = email;
+}
+
+/* --------------------------------------------------------------------------
+   Create Login Modal HTML
+   -------------------------------------------------------------------------- */
 function createLoginModal() {
   const modal = document.createElement('div');
   modal.id = 'xtend-auth-modal';
@@ -196,18 +301,68 @@ function createLoginModal() {
           <div style="font-size:18px;font-weight:700;color:#111111;letter-spacing:0.2px;">Guud Marketplace</div>
         </div>
       </div>
-      <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Email</label>
-        <input id="auth-email" type="email" placeholder="you@guud.global" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+
+      <!-- Login Form -->
+      <div id="login-form">
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Email</label>
+          <input id="auth-email" type="email" placeholder="you@guud.global" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Password</label>
+          <input id="auth-password" type="password" placeholder="••••••••" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+        </div>
+        <div id="auth-error" style="color:#E01F52;font-size:13px;margin-bottom:12px;font-weight:600;"></div>
+        <button onclick="window.xtendAuthLogin()" style="width:100%;padding:12px;background:#FF3366;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s;" onmouseover="this.style.background='#E01F52'" onmouseout="this.style.background='#FF3366'">
+          Sign In
+        </button>
+        <div style="text-align:center;margin-top:14px;">
+          <a href="#" onclick="window.showForgotForm();return false;" style="color:#FF3366;font-size:13px;font-weight:600;text-decoration:none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">Forgot password?</a>
+        </div>
       </div>
-      <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Password</label>
-        <input id="auth-password" type="password" placeholder="••••••••" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+
+      <!-- Forgot Password Form -->
+      <div id="forgot-form" style="display:none;">
+        <div style="font-size:13px;color:#6B6B6B;margin-bottom:16px;">Enter your email and we'll send you a reset code.</div>
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Email</label>
+          <input id="fp-email" type="email" placeholder="you@guud.global" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+        </div>
+        <div id="fp-error" style="color:#E01F52;font-size:13px;margin-bottom:12px;font-weight:600;"></div>
+        <div id="fp-success" style="color:#10b981;font-size:13px;margin-bottom:12px;font-weight:600;"></div>
+        <button onclick="window.xtendAuthForgotPassword()" style="width:100%;padding:12px;background:#FF3366;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s;" onmouseover="this.style.background='#E01F52'" onmouseout="this.style.background='#FF3366'">
+          Send Reset Code
+        </button>
+        <div style="text-align:center;margin-top:14px;">
+          <a href="#" onclick="window.showLoginForm();return false;" style="color:#6B6B6B;font-size:13px;font-weight:600;text-decoration:none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">← Back to Sign In</a>
+        </div>
       </div>
-      <div id="auth-error" style="color:#E01F52;font-size:13px;margin-bottom:12px;font-weight:600;"></div>
-      <button onclick="window.xtendAuthLogin()" style="width:100%;padding:12px;background:#FF3366;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s;" onmouseover="this.style.background='#E01F52'" onmouseout="this.style.background='#FF3366'">
-        Sign In
-      </button>
+
+      <!-- Reset Password Form -->
+      <div id="reset-form" style="display:none;">
+        <div style="font-size:13px;color:#6B6B6B;margin-bottom:16px;">Enter the code from your email and your new password.</div>
+        <input id="rp-email" type="hidden" />
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Verification Code</label>
+          <input id="rp-code" type="text" placeholder="123456" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">New Password</label>
+          <input id="rp-password" type="password" placeholder="••••••••" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Confirm New Password</label>
+          <input id="rp-confirm" type="password" placeholder="••••••••" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+        </div>
+        <div id="rp-error" style="color:#E01F52;font-size:13px;margin-bottom:12px;font-weight:600;"></div>
+        <div id="rp-success" style="color:#10b981;font-size:13px;margin-bottom:12px;font-weight:600;"></div>
+        <button onclick="window.xtendAuthConfirmReset()" style="width:100%;padding:12px;background:#FF3366;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s;" onmouseover="this.style.background='#E01F52'" onmouseout="this.style.background='#FF3366'">
+          Reset Password
+        </button>
+        <div style="text-align:center;margin-top:14px;">
+          <a href="#" onclick="window.showLoginForm();return false;" style="color:#6B6B6B;font-size:13px;font-weight:600;text-decoration:none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">← Back to Sign In</a>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(modal);
@@ -220,6 +375,11 @@ function createLoginModal() {
   }
   window.xtendAuthLogin = xtendAuthLogin;
   window.xtendAuthLogout = xtendAuthLogout;
+  window.xtendAuthForgotPassword = xtendAuthForgotPassword;
+  window.xtendAuthConfirmReset = xtendAuthConfirmReset;
+  window.showLoginForm = showLoginForm;
+  window.showForgotForm = showForgotForm;
+  window.showResetPasswordForm = showResetPasswordForm;
   createLoginModal();
   xtendAuthCheck();
 })();
