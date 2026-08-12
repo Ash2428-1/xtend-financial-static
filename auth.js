@@ -210,6 +210,19 @@ function startReadOnlyEnforcement() {
 
 /* --- Per-section visibility: hide entity/output/input tabs the user was
        not granted, then make sure the active tab is a visible one. --- */
+const ENTITY_PANEL_IDS = [
+  'entityGeneral', 'entityMobiles', 'entitySA', 'entitySubs',
+  'entityEcosystem', 'entitySensitivity', 'entityPipeline',
+  'entitySummary', 'entityPermissions'
+];
+
+function hideAllEntityPanels() {
+  ENTITY_PANEL_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+}
+
 function activateFirstVisible(selector) {
   const tabs = Array.from(document.querySelectorAll(selector));
   if (!tabs.length) return;
@@ -262,7 +275,9 @@ function applySectionPermissions(perms) {
   activateFirstVisible('.output-tab[data-output]');
   activateFirstVisible('.sa-output-tab[data-saoutput]');
 
-  return Object.values(entityGrants).some(Boolean);
+  const anyGranted = Object.values(entityGrants).some(Boolean);
+  if (!anyGranted) hideAllEntityPanels();
+  return anyGranted;
 }
 
 function applyAuthz(authz) {
@@ -272,21 +287,26 @@ function applyAuthz(authz) {
 
   if (isSuper) return; // full access, nothing hidden or disabled
 
-  let anyGranted = true;
+  let anyGranted = false;
   if (authz.perms) {
     anyGranted = applySectionPermissions(authz.perms);
+  } else {
+    // No permissions recorded on this account (e.g. someone self-registered
+    // instead of being created by an admin) — deny by default: no tabs, no
+    // panels, no data.
+    document.querySelectorAll('.entity-tab').forEach((t) => { t.style.display = 'none'; });
+    hideAllEntityPanels();
   }
-  // Legacy users without a perms attribute keep the old viewer behaviour:
-  // everything visible, editing disabled.
 
   if (authz.access !== 'write') {
     startReadOnlyEnforcement();
+  }
+  if (!anyGranted) {
+    showAuthBanner('🔒 This account has no dashboard access yet — contact your admin.');
+  } else if (authz.access !== 'write') {
     showAuthBanner('🔒 View-only mode — Contact admin for edit access');
   } else {
     showAuthBanner('🔒 Limited access — you can edit the sections granted to you');
-  }
-  if (authz.perms && !anyGranted) {
-    showAuthBanner('🔒 No sections have been granted to your account yet — contact your admin.');
   }
 }
 
