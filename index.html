@@ -1177,6 +1177,9 @@ const MOBILES_PERMISSION_TABS = [
   { key: "entity", label: "Entity Consolidated P&L" },
   { key: "mobilefinancials", label: "Mobile Financials" },
   { key: "groupconsolidated", label: "Group Balance Sheet & Cash Flow" },
+  { key: "payrollassumptions", label: "Payroll Assumptions" },
+  { key: "opreadiness", label: "Operational Readiness" },
+  { key: "unitbreakdown", label: "Cost by Unit" },
   { key: "check", label: "Reconciliation Check" },
 ];
 const SA_PERMISSION_TABS = [
@@ -1201,6 +1204,9 @@ function defaultUserPermissionEntry() {
     summary: false,
     guudMobiles: { enabled: false, tabs: mobilesTabs },
     guudSA: { enabled: false, tabs: saTabs },
+    created: false,   // true once a Cognito login exists for this user
+    username: "",     // Cognito username (= email)
+    tempPassword: "", // last generated temporary password (shown to admin)
   };
 }
 
@@ -9245,11 +9251,15 @@ function renderBreakevenAllEntitiesCard(be) {
 }
 
 /* ============================================================
-   USER PERMISSIONS — planning tool, not enforced access control
+   USER PERMISSIONS — creates real Cognito logins and records
+   which sections each login may see / edit (enforced by auth.js
+   at sign-in).
    ============================================================ */
 function renderUserPermissions() {
   const host = document.getElementById("userPermissionsHost");
   const users = mobilesState.userPermissions;
+
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
   function userCardHTML(u) {
     const mobilesTabsHTML = MOBILES_PERMISSION_TABS.map((t) => `
@@ -9257,20 +9267,37 @@ function renderUserPermissions() {
     const saTabsHTML = SA_PERMISSION_TABS.map((t) => `
       <label class="perm-tab-check"><input type="checkbox" data-user="${u.id}" data-field="guudSA.tabs.${t.key}" ${u.guudSA.tabs[t.key] ? "checked" : ""} ${u.guudSA.enabled ? "" : "disabled"}> ${t.label}</label>`).join("");
 
+    const statusHTML = u.created
+      ? `<span style="color:#0f7b4d; font-weight:700;">✓ Login created for ${esc(u.username)}</span>`
+      : `<span style="color:#6B6B6B;">No login yet — fill in name + email, tick access, then create the login.</span>`;
+
+    const tempPwHTML = u.created && u.tempPassword ? `
+      <div class="banner" style="margin-top:10px; align-items:flex-start;">
+        <div>Temporary password for <strong>${esc(u.username)}</strong>: <code style="background:#fff; padding:2px 8px; border-radius:4px; font-size:14px; user-select:all;">${esc(u.tempPassword)}</code><br>
+        <span class="hint">Share this privately. Cognito emailed the user a verification code — at first sign-in they enter it, then use this password. They can change the password afterwards via “Forgot password”.</span></div>
+      </div>` : "";
+
+    const createBtnHTML = u.created
+      ? `<span class="hint" style="align-self:center;">Removing this card only removes it here — the Cognito login stays active.</span>`
+      : `<button class="btn primary" data-create-user="${u.id}" style="height:34px;">Create Login</button>`;
+
     return `
     <div class="card" data-user-card="${u.id}" style="margin-bottom:14px;">
       <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px;">
         <div class="field-row" style="flex:1; min-width:180px;"><label>Name</label>
-          <input type="text" data-user="${u.id}" data-field="name" value="${u.name}" placeholder="e.g. Lillian Majoro"></div>
-        <div class="field-row" style="flex:1; min-width:200px;"><label>Email (optional)</label>
-          <input type="text" data-user="${u.id}" data-field="email" value="${u.email}" placeholder="name@guud.co.za"></div>
+          <input type="text" data-user="${u.id}" data-field="name" value="${esc(u.name)}" placeholder="e.g. Lillian Majoro"></div>
+        <div class="field-row" style="flex:1; min-width:200px;"><label>Email (login username)</label>
+          <input type="text" data-user="${u.id}" data-field="email" value="${esc(u.email)}" placeholder="name@guud.co.za" ${u.created ? "disabled" : ""}></div>
         <div class="field-row" style="min-width:140px;"><label>Access Level</label>
           <select data-user="${u.id}" data-field="accessLevel">
             <option value="read" ${u.accessLevel === "read" ? "selected" : ""}>Read only</option>
             <option value="write" ${u.accessLevel === "write" ? "selected" : ""}>Read &amp; Write</option>
           </select></div>
+        ${createBtnHTML}
         <button class="btn" data-remove-user="${u.id}" style="height:34px;">Remove</button>
       </div>
+      <div style="margin-bottom:10px;">${statusHTML}</div>
+      ${tempPwHTML}
       <div class="section-label">Access</div>
       <label class="perm-tab-check"><input type="checkbox" data-user="${u.id}" data-field="generalAssumptions" ${u.generalAssumptions ? "checked" : ""}> General Assumptions</label>
       <label class="perm-tab-check"><input type="checkbox" data-user="${u.id}" data-field="summary" ${u.summary ? "checked" : ""}> Summary</label>
@@ -9289,12 +9316,12 @@ function renderUserPermissions() {
     <div class="card">
       <div class="eyebrow">Access Control</div>
       <h3>User Permissions</h3>
-      <div class="banner negative" style="margin-bottom:14px; align-items:flex-start;">
-        <div>⚠ Planning tool only, not enforced access control. This is a single, unauthenticated file with no login system or server — anyone who opens it can see and edit everything regardless of what's configured here. Use this tab to document and plan an access policy for whenever real authentication is added (e.g. behind a company login), not as an actual security boundary today.</div>
+      <div class="banner" style="margin-bottom:14px; align-items:flex-start;">
+        <div><strong>This tab creates real logins.</strong> Each user is created in the dashboard's sign-in system with the access you select below. At sign-in they only see the sections you grant; <strong>Read only</strong> users cannot change any numbers, <strong>Read &amp; Write</strong> users can edit their sections. New users get an email with a verification code — give them the temporary password shown after creating their login. Super Admins always see everything. Enforcement happens in this dashboard's browser UI.</div>
       </div>
       <button class="btn primary" id="addUserBtn">+ Add User</button>
     </div>
-    ${users.length ? users.map(userCardHTML).join("") : `<div class="card"><div class="hint">No users added yet. Click "+ Add User" above to start planning access.</div></div>`}
+    ${users.length ? users.map(userCardHTML).join("") : `<div class="card"><div class="hint">No users added yet. Click "+ Add User" above, fill in their details, tick their access, then click "Create Login" on their card.</div></div>`}
   `;
 
   document.getElementById("addUserBtn").addEventListener("click", () => {
@@ -9306,6 +9333,35 @@ function renderUserPermissions() {
       const id = Number(btn.dataset.removeUser);
       const idx = users.findIndex((u) => u.id === id);
       if (idx > -1) users.splice(idx, 1);
+      renderUserPermissions();
+    });
+  });
+  document.querySelectorAll("[data-create-user]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = Number(btn.dataset.createUser);
+      const user = users.find((u) => u.id === id);
+      if (!user) return;
+      const name = (user.name || "").trim();
+      const email = (user.email || "").trim().toLowerCase();
+      if (!name) { alert("Enter the user's name first."); return; }
+      if (!/^\S+@\S+\.\S+$/.test(email)) { alert("Enter a valid email — it becomes their login username and receives the verification code."); return; }
+      if (typeof window.xtendCreateUser !== "function") { alert("Auth module not loaded yet — try again in a moment."); return; }
+      btn.disabled = true;
+      btn.textContent = "Creating…";
+      try {
+        const perms = {
+          generalAssumptions: !!user.generalAssumptions,
+          summary: !!user.summary,
+          guudMobiles: { enabled: !!user.guudMobiles.enabled, tabs: user.guudMobiles.tabs },
+          guudSA: { enabled: !!user.guudSA.enabled, tabs: user.guudSA.tabs },
+        };
+        const res = await window.xtendCreateUser({ name, email, access: user.accessLevel, perms });
+        user.created = true;
+        user.username = email;
+        user.tempPassword = res.password;
+      } catch (err) {
+        alert("Could not create login: " + (err && err.message ? err.message : err));
+      }
       renderUserPermissions();
     });
   });
@@ -10249,7 +10305,7 @@ if (savedCombined) {
 }
 </script>
 <div id="printStage"></div>
-<script src="auth.js?v=4"></script>
+<script src="auth.js?v=5"></script>
 </body>
 </html>
  
