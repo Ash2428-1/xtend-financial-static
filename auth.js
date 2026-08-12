@@ -120,6 +120,13 @@ function updateUIBasedOnRole(role) {
     const banner = document.createElement('div');
     banner.id = 'auth-readonly-banner';
     banner.innerHTML = `
+      <div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#7C2037;color:#fff;padding:10px 20px;text-align:center;font-size:14px;font-family:Calibri,'Segoe UI',Roboto,Arial,sans-serif;">
+        🔒 View-only mode — Contact admin for edit access
+      </div>
+    `;
+    const banner = document.createElement('div');
+    banner.id = 'auth-readonly-banner';
+    banner.innerHTML = `
       <div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#111;color:#fff;padding:10px 20px;text-align:center;font-size:14px;">
         🔒 View-only mode — Contact admin for edit access
       </div>
@@ -130,6 +137,21 @@ function updateUIBasedOnRole(role) {
 }
 
 function showUserInfo(email, role) {
+  let bar = document.getElementById('auth-user-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'auth-user-bar';
+    bar.style.cssText = 'position:fixed;top:0;right:0;z-index:10000;padding:8px 16px;background:#111;color:#fff;font-size:13px;display:flex;align-items:center;gap:12px;border-radius:0 0 0 8px;font-family:Calibri,"Segoe UI",Roboto,Arial,sans-serif;';
+    document.body.appendChild(bar);
+  }
+  const roleLabel = role === 'superadmin' ? 'Super Admin' : 'Viewer';
+  const roleColor = role === 'superadmin' ? '#FF3366' : '#fbbf24';
+  bar.innerHTML = `
+    <span>${email}</span>
+    <span style="color:${roleColor};font-weight:600;">${roleLabel}</span>
+    <button class="auth-logout-btn" onclick="window.xtendAuthLogout()" style="background:#333;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;">Logout</button>
+  `;
+}
   let bar = document.getElementById('auth-user-bar');
   if (!bar) {
     bar = document.createElement('div');
@@ -211,6 +233,38 @@ function xtendAuthCheck() {
    Create Login Modal HTML
    -------------------------------------------------------------------------- */
 function createLoginModal() {
+  const modal = document.createElement('div');
+  modal.id = 'xtend-auth-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#F6E9EC;display:flex;align-items:center;justify-content:center;font-family:Calibri,"Segoe UI",Roboto,Arial,sans-serif;';
+  modal.innerHTML = `
+    <div style="background:#fff;padding:36px 32px;border-radius:10px;width:100%;max-width:380px;box-shadow:0 1px 3px rgba(22,50,58,0.08);border:1px solid #F5DCE3;">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:24px;">
+        <svg width="44" height="44" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">
+          <circle cx="26" cy="26" r="25" fill="#FF3366"/>
+          <circle cx="26" cy="26" r="25" fill="none" stroke="#FFF0F4" stroke-width="1.5" stroke-opacity="0.5"/>
+          <text x="26" y="35" font-family="Calibri, Arial, sans-serif" font-size="26" font-weight="700" fill="#FFFFFF" text-anchor="middle">G</text>
+        </svg>
+        <div>
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#FF3366;font-weight:700;margin-bottom:2px;">Mobile Economics</div>
+          <div style="font-size:18px;font-weight:700;color:#111111;letter-spacing:0.2px;">Guud Marketplace</div>
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Email</label>
+        <input id="auth-email" type="email" placeholder="you@guud.global" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:12.5px;color:#6B6B6B;margin-bottom:4px;font-weight:600;">Password</label>
+        <input id="auth-password" type="password" placeholder="••••••••" style="width:100%;padding:10px 12px;border:1px solid #F5DCE3;border-radius:6px;font-size:14px;box-sizing:border-box;font-family:inherit;background:#FFF0F4;" />
+      </div>
+      <div id="auth-error" style="color:#E01F52;font-size:13px;margin-bottom:12px;font-weight:600;"></div>
+      <button onclick="window.xtendAuthLogin()" style="width:100%;padding:12px;background:#FF3366;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s;" onmouseover="this.style.background='#E01F52'" onmouseout="this.style.background='#FF3366'">
+        Sign In
+      </button>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
   const modal = document.createElement('div');
   modal.id = 'xtend-auth-modal';
   modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;';
