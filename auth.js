@@ -276,7 +276,11 @@ function applySectionPermissions(perms) {
   activateFirstVisible('.sa-output-tab[data-saoutput]');
 
   const anyGranted = Object.values(entityGrants).some(Boolean);
-  if (!anyGranted) hideAllEntityPanels();
+  if (!anyGranted) {
+    hideAllEntityPanels();
+    const header = document.querySelector('header');
+    if (header) header.style.display = 'none';
+  }
   return anyGranted;
 }
 
@@ -296,6 +300,8 @@ function applyAuthz(authz) {
     // panels, no data.
     document.querySelectorAll('.entity-tab').forEach((t) => { t.style.display = 'none'; });
     hideAllEntityPanels();
+    const header = document.querySelector('header');
+    if (header) header.style.display = 'none';
   }
 
   if (authz.access !== 'write') {
