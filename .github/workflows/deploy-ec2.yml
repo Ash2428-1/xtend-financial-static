@@ -24,9 +24,10 @@ jobs:
           script: |
             set -e
             echo "=== Pulling latest code ==="
-            cd /var/www/staging.fin.xtend.co
+            cd /tmp
             curl -fsSL -o index.html https://raw.githubusercontent.com/Ash2428-1/xtend-financial-static/main/index.html
-            sudo chown www-data:www-data index.html
+            sudo mv index.html /var/www/staging.fin.xtend.co/
+            sudo chown www-data:www-data /var/www/staging.fin.xtend.co/index.html
             echo "=== Reloading Nginx ==="
             sudo nginx -t && sudo systemctl reload nginx
             echo "=== Done ==="
