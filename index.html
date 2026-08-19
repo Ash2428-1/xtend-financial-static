@@ -709,6 +709,8 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
     <button class="btn" id="exportMobilesModelBtn">📊 Export Guud Mobiles Model</button>
     <button class="btn" id="exportSAModelBtn">📊 Export Guud SA Model</button>
     <button class="btn" id="exportSubsModelBtn">📊 Export Subsidiaries Model</button>
+    <button class="btn" id="printMobilesPackBtn">🖨 Guud Mobiles Pack (PDF)</button>
+    <button class="btn" id="exportMobilesPackBtn">📊 Guud Mobiles Pack (Excel)</button>
     <button class="btn primary" id="saveInputsBtn">💾 Save Inputs</button>
     <input type="file" id="importFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
   </div>
@@ -717,6 +719,7 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
 <div class="entity-tabbar">
   <div class="entity-tab" data-entity="general">General Assumptions</div>
   <div class="entity-tab" data-entity="pipeline">Sales Pipeline</div>
+  <div class="entity-tab" data-entity="sars">SARS Debt</div>
   <div class="entity-tab" data-entity="summary">Summary</div>
   <div class="entity-tab" data-entity="sensitivity">Sensitivity</div>
   <div class="entity-tab active" data-entity="mobiles">Guud Mobiles</div>
@@ -775,6 +778,9 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
       <div class="output-tab" data-output="payrollassumptions">Payroll Assumptions</div>
       <div class="output-tab" data-output="opreadiness">Operational Readiness</div>
       <div class="output-tab" data-output="unitbreakdown">Cost by Unit</div>
+      <div class="output-tab" data-output="fleetpnl">Fleet P&amp;L (Monthly)</div>
+      <div class="output-tab" data-output="stock">Stock</div>
+      <div class="output-tab" data-output="clientpnl">Client P&amp;L</div>
       <div class="output-tab" data-output="check">Reconciliation Check</div>
     </div>
     <div class="stack" id="dashboardHost"></div>
@@ -859,6 +865,12 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
 <div id="entitySensitivity" style="display:none;">
   <main style="grid-template-columns: 1fr; padding: 10px 12px;">
     <div class="stack" id="sensitivityHost"></div>
+  </main>
+</div>
+
+<div id="entitySars" style="display:none;">
+  <main style="grid-template-columns: 1fr; padding: 10px 12px;">
+    <div class="stack" id="sarsHost"></div>
   </main>
 </div>
 
@@ -1177,9 +1189,6 @@ const MOBILES_PERMISSION_TABS = [
   { key: "entity", label: "Entity Consolidated P&L" },
   { key: "mobilefinancials", label: "Mobile Financials" },
   { key: "groupconsolidated", label: "Group Balance Sheet & Cash Flow" },
-  { key: "payrollassumptions", label: "Payroll Assumptions" },
-  { key: "opreadiness", label: "Operational Readiness" },
-  { key: "unitbreakdown", label: "Cost by Unit" },
   { key: "check", label: "Reconciliation Check" },
 ];
 const SA_PERMISSION_TABS = [
@@ -1204,9 +1213,6 @@ function defaultUserPermissionEntry() {
     summary: false,
     guudMobiles: { enabled: false, tabs: mobilesTabs },
     guudSA: { enabled: false, tabs: saTabs },
-    created: false,   // true once a Cognito login exists for this user
-    username: "",     // Cognito username (= email)
-    tempPassword: "", // last generated temporary password (shown to admin)
   };
 }
 
@@ -2190,7 +2196,15 @@ function computeSAModel(sa) {
   let cumNetProfit = 0;
   const retainedEarnings = range(n).map((m) => { cumNetProfit += netProfit[m]; return cumNetProfit; });
   const shareCapital = range(n).map(() => sa.workingCapital.openingShareCapital);
-  const totalAssets = range(n).map((m) => closingCash[m] + debtors[m] + fixedAssetsNet[m]);
+  // Contra to Guud Mobiles' income received in advance: Guud SA has paid for
+  // assessments not yet delivered, so cash leaves early and a prepayment asset
+  // is recognised. The two offset, so total assets are unchanged and the
+  // balance sheet still balances — but both sides are now visible.
+  const saDeferred = computeDeferredIncome();
+  const prepaidAssessmentsSA = saDeferred.assessmentsTotal.slice();
+  const prepaymentsSA = saDeferred.valueTotal.slice();
+  const cashAfterPrepay = range(n).map((m) => closingCash[m] - prepaymentsSA[m]);
+  const totalAssets = range(n).map((m) => cashAfterPrepay[m] + prepaymentsSA[m] + debtors[m] + fixedAssetsNet[m]);
   const totalLiabilities = range(n).map((m) => creditors[m] + taxPayable[m]);
   const totalEquity = range(n).map((m) => shareCapital[m] + retainedEarnings[m]);
   const balanceCheck = range(n).map((m) => totalAssets[m] - (totalLiabilities[m] + totalEquity[m]));
@@ -2230,7 +2244,11 @@ function computeSAModel(sa) {
       capex, cfInvesting, shareInjection, cfFinancing, netCashMovement, openingCash, closingCash,
     },
     balanceSheet: {
-      cash: closingCash, debtors, fixedAssetsNet, totalAssets,
+      cash: cashAfterPrepay, cashBeforePrepay: closingCash,
+      prepayments: prepaymentsSA, prepaidAssessments: prepaidAssessmentsSA,
+      prepaidPocx: saDeferred.assessments.pocx.slice(), prepaidSioc: saDeferred.assessments.sioc.slice(), prepaidDental: saDeferred.assessments.dental.slice(),
+      prepayPocx: saDeferred.value.pocx.slice(), prepaySioc: saDeferred.value.sioc.slice(), prepayDental: saDeferred.value.dental.slice(),
+      debtors, fixedAssetsNet, totalAssets,
       creditors, taxPayable, totalLiabilities,
       shareCapital, retainedEarnings, totalEquity, balanceCheck,
     },
@@ -2306,6 +2324,69 @@ function defaultSharedState() {
     // the ecosystem businesses only — each applies its own monthly charge per
     // vehicle to this count. Set here so one number drives them all.
     externalVehicleCount: [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
+    // Client P&Ls. Each client takes a share of a solution's volume, and the
+    // direct costs of serving it follow that share — crew, LOAs, running
+    // costs and consumables. Regional overhead and Support Office are NOT
+    // allocated, so the result is a contribution rather than a net profit.
+    clients: [
+      { id: nextId(), name: "SIOC", allocations: { pocx: 0, sioc: 100, dental: 100 },
+        note: "Community Health General and the Dental unit are both SIOC work." },
+    ],
+    // SARS debt, per company, split by tax type. Interest accrues on the
+    // outstanding balance and payment plans amortise it down. Companies that
+    // do not correspond to an entity in this model are carried but shown
+    // separately, so the Group total still ties to the SARS summary.
+    sarsDebt: {
+      interestRate: 11.75,
+      entries: [
+        { id: nextId(), group: "GM", company: "Guud Mobiles", entity: "mobiles", vat: 0, paye: 1632298.98, stc: 0, monthlyPayment: 0, periods: 0, note: "Payment plan in place — monthly amount to confirm" },
+        { id: nextId(), group: "GM", company: "Tito Mobility Solutions", entity: "", vat: 0, paye: 0, stc: 0, monthlyPayment: 0, periods: 0, note: "Compliant" },
+        { id: nextId(), group: "Guud SA", company: "Guud SA", entity: "sa", vat: 1032872.63, paye: 94134, stc: 0, monthlyPayment: 261782, periods: 4, note: "VAT payment plan" },
+        { id: nextId(), group: "Guud SA", company: "Guud Vision", entity: "gvision", vat: 0, paye: 156868.92, stc: 523248.61, monthlyPayment: 0, periods: 0, note: "" },
+        { id: nextId(), group: "Guud SA", company: "Guud Diagnostic", entity: "gdiag", vat: 0, paye: 84375.22, stc: 0, monthlyPayment: 0, periods: 0, note: "" },
+        { id: nextId(), group: "Guud SA", company: "Driving Health", entity: "", vat: 572371.97, paye: 974411.06, stc: 0, monthlyPayment: 0, periods: 0, note: "" },
+        { id: nextId(), group: "Guud SA", company: "Guud Wellness", entity: "", vat: 253343.45, paye: 966125.02, stc: 0, monthlyPayment: 0, periods: 0, note: "" },
+        { id: nextId(), group: "Guud SA", company: "Botha & Botha", entity: "", vat: 0, paye: 0, stc: 0, monthlyPayment: 0, periods: 0, note: "Nil" },
+        { id: nextId(), group: "Xtend", company: "Glasshouse / Guud Tech (Xtend Holdings SA)", entity: "xtendhold", vat: 5465167.41, paye: 2746975.53, stc: 1536551.03, monthlyPayment: 0, periods: 0, note: "Audit submitted, awaiting SARS" },
+        { id: nextId(), group: "Xtend", company: "Specialised Vehicle Leasing (SVL)", entity: "svl", vat: 0, paye: 6275.57, stc: 0, monthlyPayment: 65435, periods: 1, note: "Payment plan" },
+        { id: nextId(), group: "Xtend", company: "Tito Properties", entity: "tito", vat: -454991.48, paye: 473336.15, stc: 3326659.5, monthlyPayment: 0, periods: 0, note: "VAT credit; STC audit awaiting SARS" },
+        { id: nextId(), group: "Xtend", company: "Guud Global SA (Xtend Investments)", entity: "", vat: 0, paye: 91387.94, stc: 0, monthlyPayment: 21316.97, periods: 2, note: "Payment plan" },
+        { id: nextId(), group: "MSA", company: "SVD — Specialised Vehicle Manufacturers", entity: "svd", vat: -314507.34, paye: 855747.89, stc: 837878.84, monthlyPayment: 197542, periods: 6, note: "VAT payment plan; VAT is a credit" },
+        { id: nextId(), group: "MSA", company: "MSS / Mobile Support Solutions", entity: "mss", vat: 394362, paye: 0, stc: 0, monthlyPayment: 65727, periods: 6, note: "VAT payment plan; PAYE unclear in source" },
+        { id: nextId(), group: "MSA", company: "Imoto Manufacturing", entity: "imoto", vat: 494043.96, paye: 856141.6, stc: 0, monthlyPayment: 0, periods: 0, note: "" },
+        { id: nextId(), group: "MSA", company: "Moblex", entity: "moblix", vat: 0, paye: 23196.13, stc: 0, monthlyPayment: 0, periods: 0, note: "" },
+        { id: nextId(), group: "MSA", company: "SA Mobility (Guud Eco)", entity: "", vat: 0, paye: 0, stc: 0, monthlyPayment: 0, periods: 0, note: "Compliant" },
+        { id: nextId(), group: "Guud Mobility SA", company: "Guud Mobility SA", entity: "", vat: 0, paye: 803519.35, stc: 8944235.86, monthlyPayment: 130163, periods: 6, note: "PAYE payment plan" },
+        { id: nextId(), group: "Guud Mobility SA", company: "Guud Drivers", entity: "", vat: 287490.22, paye: 547585.79, stc: 0, monthlyPayment: 0, periods: 0, note: "" },
+        { id: nextId(), group: "AMS", company: "AMS", entity: "", vat: 13041.46, paye: 316019.63, stc: 0, monthlyPayment: 0, periods: 0, note: "VAT for June not submitted — R4m effect pending" },
+        { id: nextId(), group: "AMS", company: "Mobile Processing Solutions (MPS)", entity: "", vat: -301100.55, paye: 496249.27, stc: 0, monthlyPayment: 0, periods: 0, note: "VAT credit" },
+      ],
+    },
+    // Stock: ageing of consumables held on each mobile and at the regional
+    // depots, plus the work that could not be completed because stock ran
+    // out. Uncut glasses are the main case — the assessment is done and the
+    // revenue earned, but the lens still has to be cut and paid for, so the
+    // cost is accrued until it is.
+    stock: {
+      consumablesShareOfVariable: 100,   // % of variable cost that is consumable stock
+      depotStock: { nc: 0, gt: 0, kzn: 0 },
+      moblixOnOrder: new Array(12).fill(0),
+      moblixInTransit: new Array(12).fill(0),
+      // Cost is already carried in variable costs, so the accrual is a timing
+      // entry on the balance sheet rather than an extra charge. Switch this on
+      // only if the outage cost is NOT already in the variable cost stack.
+      accrualAddsCost: false,
+      glassTypes: [
+        { id: nextId(), label: "Single vision", unitCost: 350, backlog: new Array(12).fill(0) },
+        { id: nextId(), label: "Bifocal", unitCost: 650, backlog: new Array(12).fill(0) },
+        { id: nextId(), label: "Varifocal", unitCost: 1200, backlog: new Array(12).fill(0) },
+      ],
+    },
+    // Support Office bills Guud SA in advance against a client purchase order,
+    // then the mobile, region and Support Office invoice against it as the
+    // assessments are delivered, winding the balance down. The lead is how
+    // many months of assessments are billed ahead of delivery.
+    deferredIncome: { enabled: true, leadMonths: { pocx: 1, sioc: 1, dental: 1 } },
     // Employer Solutions fleet is demand-driven rather than a fixed rollout.
     // A set number of vehicles is staffed and operating; when utilisation of
     // those vehicles passes the trigger, another vehicle and team come on, up
@@ -2334,8 +2415,14 @@ function defaultSharedState() {
     // operational days are set directly.
     loa: {
       ratePerDay: 800,
+      // How LOA days are arrived at, per vehicle type. Employer Solutions is
+      // derived from the work done — assessments divided by the assessments a
+      // vehicle completes in a day. Community Health and Dental do not earn an
+      // allowance on every operational day, so their LOA days are set directly.
+      basis: { pocx: "derived", sioc: "fixedDays", dental: "fixedDays" },
       assessmentsPerDay: { pocx: 30, sioc: 30 },
       maxAssessmentsPerDay: { pocx: 50, sioc: 50 },
+      loaDaysPerMonth: { pocx: new Array(12).fill(0), sioc: new Array(12).fill(15), dental: new Array(12).fill(21) },
       dentalDaysPerMonth: 21,
       staffPerVehicle: { pocx: 5, sioc: 5, dental: 3 },
     },
@@ -2438,8 +2525,22 @@ let sharedState = (savedCombined && isValidSharedState(savedCombined.general)) ?
 if (!Array.isArray(sharedState.externalVehicleCount)) sharedState.externalVehicleCount = defaultSharedState().externalVehicleCount;
 if (!sharedState.debtService) sharedState.debtService = defaultSharedState().debtService;
 if (!sharedState.loa) sharedState.loa = defaultSharedState().loa;
+if (!sharedState.loa.basis) sharedState.loa.basis = defaultSharedState().loa.basis;
+if (!sharedState.loa.loaDaysPerMonth) sharedState.loa.loaDaysPerMonth = defaultSharedState().loa.loaDaysPerMonth;
+// Older saves held one figure for the year; expand it across the months.
+["pocx", "sioc", "dental"].forEach((k) => {
+  const v = sharedState.loa.loaDaysPerMonth[k];
+  if (!Array.isArray(v)) sharedState.loa.loaDaysPerMonth[k] = new Array(12).fill(Number(v || 0));
+});
 if (!sharedState.pipeline) sharedState.pipeline = defaultSharedState().pipeline;
 if (!sharedState.fleetRule) sharedState.fleetRule = defaultSharedState().fleetRule;
+if (!sharedState.deferredIncome) sharedState.deferredIncome = defaultSharedState().deferredIncome;
+if (!sharedState.stock) sharedState.stock = defaultSharedState().stock;
+if (!sharedState.sarsDebt) sharedState.sarsDebt = defaultSharedState().sarsDebt;
+if (!Array.isArray(sharedState.clients)) sharedState.clients = defaultSharedState().clients;
+if (!Array.isArray(sharedState.stock.moblixOnOrder)) sharedState.stock.moblixOnOrder = new Array(12).fill(0);
+if (!Array.isArray(sharedState.stock.moblixInTransit)) sharedState.stock.moblixInTransit = new Array(12).fill(0);
+(sharedState.stock.glassTypes || []).forEach((g) => { if (!Array.isArray(g.backlog)) g.backlog = new Array(12).fill(0); });
 if (!Array.isArray(sharedState.pipeline.lines)) sharedState.pipeline.lines = [];
 if (!Array.isArray(sharedState.debtService.sars)) sharedState.debtService.sars = new Array(12).fill(0);
 if (!Array.isArray(sharedState.debtService.commercial)) sharedState.debtService.commercial = new Array(12).fill(0);
@@ -2457,6 +2558,9 @@ let activeEntity = "mobiles";
 // requested — first full operating month after go-live).
 let summaryMonthIdx = 1;
 let fcfMonthIdx = 1;
+let fleetPnlMonthIdx = 1;
+let stockMonthIdx = 1;
+let clientPnLId = null;
 // Sensitivity scenario state — a what-if overlay that never mutates the real
 // model. Charges are per-entity POCx rates; volume is the monthly POCx
 // assessment count applied across every entity and the consolidation.
@@ -2706,6 +2810,9 @@ function computeRegionSnapshot(region) {
 // operating — see loaForSolutionMonth.
 // Operational days one vehicle works in a month, given the assessments it
 // completes. A part day is still a day away, so this rounds up.
+// Days a vehicle must actually work to deliver its volume. A capacity
+// measure — used to test whether the plan is deliverable — and separate from
+// how many of those days attract an allowance.
 function loaOperationalDays(bucket, perVehicleVolume) {
   const L = sharedState.loa;
   if (bucket === "dental") return Number(L.dentalDaysPerMonth || 0);
@@ -2713,12 +2820,27 @@ function loaOperationalDays(bucket, perVehicleVolume) {
   if (!(perDay > 0) || !(perVehicleVolume > 0)) return 0;
   return Math.ceil(perVehicleVolume / perDay);
 }
+// Days that actually attract an allowance. Employer Solutions crews are away
+// for every operational day, so the two coincide. Community Health and Dental
+// crews are not, so their allowance days are set directly rather than derived.
+function loaDaysFor(bucket, perVehicleVolume, m) {
+  const L = sharedState.loa;
+  const basis = (L.basis || {})[bucket] || "derived";
+  if (basis === "fixedDays") {
+    // No work in the month means no crew away and no allowance.
+    if (bucket !== "dental" && !(perVehicleVolume > 0)) return 0;
+    const arr = (L.loaDaysPerMonth || {})[bucket];
+    if (Array.isArray(arr)) return Number(arr[m === undefined ? 0 : m] || 0);
+    return Number(arr || 0);
+  }
+  return loaOperationalDays(bucket, perVehicleVolume);
+}
 // LOA for one vehicle for one month: operational days x daily rate x the
 // number of staff on that vehicle who earn it. No work, no operational days,
 // no allowances.
-function loaForVehicleMonth(bucket, perVehicleVolume) {
+function loaForVehicleMonth(bucket, perVehicleVolume, m) {
   const L = sharedState.loa;
-  const days = loaOperationalDays(bucket, perVehicleVolume);
+  const days = loaDaysFor(bucket, perVehicleVolume, m);
   const staff = Number((L.staffPerVehicle || {})[bucket] || 0);
   return days * Number(L.ratePerDay || 0) * staff;
 }
@@ -2959,9 +3081,9 @@ function computeRegionalPnL(region) {
     // does no work — no operations, no allowances.
     // LOA is computed from the work each vehicle actually does, then added —
     // the static LOA lines are held at zero so nothing is counted twice.
-    const pocxLoaM = loaForVehicleMonth("pocx", activePocx[m] ? regionPocxVol / activePocx[m] : 0);
-    const siocLoaM = loaForVehicleMonth("sioc", activeSioc[m] ? regionSiocVol / activeSioc[m] : 0);
-    const dentalLoaM = activeDental[m] > 0 ? loaForVehicleMonth("dental", 1) : 0;
+    const pocxLoaM = loaForVehicleMonth("pocx", activePocx[m] ? regionPocxVol / activePocx[m] : 0, m);
+    const siocLoaM = loaForVehicleMonth("sioc", activeSioc[m] ? regionSiocVol / activeSioc[m] : 0, m);
+    const dentalLoaM = activeDental[m] > 0 ? loaForVehicleMonth("dental", 1, m) : 0;
     const pocxFixedM = activePocx[m] * (pocxM.totalFixed + pocxLoaM);
     const siocFixedM = activeSioc[m] * (siocM.totalFixed + siocLoaM);
     const dentalFixedM = activeDental[m] * (dentalM.totalFixed + dentalLoaM);
@@ -3144,7 +3266,7 @@ function computeMobileFinancials(mobile) {
       if (mobile.type === "dental") {
         revenue = dental.monthlyFee;
         // Dental operates whenever the unit is live, on set operational days.
-        fixedCost = dentalM.totalFixed + loaForVehicleMonth("dental", 1) + salaryAdjByMonth[m];
+        fixedCost = dentalM.totalFixed + loaForVehicleMonth("dental", 1, m) + salaryAdjByMonth[m];
         netProfit = revenue - fixedCost;
         consumablesTopUp = 10000;
       } else {
@@ -3163,7 +3285,7 @@ function computeMobileFinancials(mobile) {
         variableCost = perVehicleVol * m3.variableCost;
         // Same LOA rule as the regional P&L: no work in the month, no
         // allowances. Kept identical so the P&L and BS/CF paths reconcile.
-        fixedCost = m3.totalFixed + loaForVehicleMonth(mobile.type, perVehicleVol) + salaryAdjByMonth[m];
+        fixedCost = m3.totalFixed + loaForVehicleMonth(mobile.type, perVehicleVol, m) + salaryAdjByMonth[m];
         netProfit = revenue - variableCost - fixedCost;
         const consumablesLine = prod.variableCostLines.find((l) => l.label.indexOf("Consumables") !== -1);
         consumablesTopUp = perVehicleVol * (consumablesLine ? Number(consumablesLine.value || 0) : 0);
@@ -3334,8 +3456,156 @@ function computeSupportOfficeFinancials() {
   return { soMetrics, allMobiles, regionFin, months, fy, endingCash: cash, endingLoansReceivable: loansReceivable, endingExtendLoan: extendLoanBalance, endingRetainedEarnings: retainedEarnings };
 }
 
+// Assessments billed but not yet delivered at each month end, and the income
+// held against them. Guud Mobiles carries this as a liability (income
+// received in advance); Guud SA carries the mirror image as a prepayment.
+// Revenue recognition is unaffected — this is purely the timing of cash
+// against delivery.
+// Stock held, aged by how many months of consumption it represents. With
+// FIFO issue, a balance worth N months of usage is spread across the buckets
+// from newest to oldest — so a mobile holding two months of cover has half
+// its stock in the 0–30 day band and half in 31–60.
+function ageStockBalance(balance, monthlyUsage, buckets) {
+  const out = new Array(buckets.length + 1).fill(0);
+  if (!(balance > 0)) return out;
+  if (!(monthlyUsage > 0)) { out[out.length - 1] = balance; return out; }
+  const edgesMonths = buckets.map((d) => d / 30).concat([Infinity]);
+  let prev = 0;
+  for (let i = 0; i < edgesMonths.length; i++) {
+    const upper = edgesMonths[i] * monthlyUsage;
+    out[i] = Math.max(0, Math.min(balance, upper) - Math.min(balance, prev));
+    prev = upper;
+  }
+  return out;
+}
+
+// SARS debt amortisation. Interest accrues monthly on the outstanding
+// balance; a payment plan draws it down over its remaining periods. Where no
+// plan is in place the balance grows with interest, which is the point of
+// showing it.
+function computeSarsDebt() {
+  const S = sharedState.sarsDebt;
+  const monthlyRate = Number(S.interestRate || 0) / 100 / 12;
+  const rows = (S.entries || []).map((e) => {
+    const opening = Number(e.vat || 0) + Number(e.paye || 0) + Number(e.stc || 0);
+    const balances = [], interest = [], payments = [];
+    let bal = opening;
+    for (let m = 0; m < 12; m++) {
+      const int = bal > 0 ? bal * monthlyRate : 0;
+      const due = (Number(e.periods || 0) > m) ? Number(e.monthlyPayment || 0) : 0;
+      const pay = Math.min(due, Math.max(0, bal + int));
+      bal = bal + int - pay;
+      interest.push(int); payments.push(pay); balances.push(bal);
+    }
+    return { ...e, opening, balances, interest, payments,
+      totalInterest: interest.reduce((s, v) => s + v, 0),
+      totalPaid: payments.reduce((s, v) => s + v, 0), closing: balances[11] };
+  });
+  const byEntity = {};
+  rows.forEach((r) => {
+    if (!r.entity) return;
+    if (!byEntity[r.entity]) byEntity[r.entity] = { opening: 0, balances: new Array(12).fill(0), payments: new Array(12).fill(0), interest: new Array(12).fill(0) };
+    const b = byEntity[r.entity];
+    b.opening += r.opening;
+    for (let m = 0; m < 12; m++) { b.balances[m] += r.balances[m]; b.payments[m] += r.payments[m]; b.interest[m] += r.interest[m]; }
+  });
+  const sum = (f) => rows.reduce((s, r) => s + r[f], 0);
+  const totals = { opening: sum("opening"), closing: sum("closing"), totalInterest: sum("totalInterest"), totalPaid: sum("totalPaid"),
+    vat: rows.reduce((s, r) => s + Number(r.vat || 0), 0), paye: rows.reduce((s, r) => s + Number(r.paye || 0), 0), stc: rows.reduce((s, r) => s + Number(r.stc || 0), 0),
+    balances: range12().map((m) => rows.reduce((s, r) => s + r.balances[m], 0)),
+    payments: range12().map((m) => rows.reduce((s, r) => s + r.payments[m], 0)),
+    interest: range12().map((m) => rows.reduce((s, r) => s + r.interest[m], 0)) };
+  const mapped = rows.filter((r) => r.entity), unmapped = rows.filter((r) => !r.entity);
+  return { rows, byEntity, totals, mapped, unmapped,
+    mappedOpening: mapped.reduce((s, r) => s + r.opening, 0),
+    unmappedOpening: unmapped.reduce((s, r) => s + r.opening, 0) };
+}
+function sarsForEntity(key) {
+  const d = computeSarsDebt();
+  return d.byEntity[key] || { opening: 0, balances: new Array(12).fill(0), payments: new Array(12).fill(0), interest: new Array(12).fill(0) };
+}
+
+function computeStockPosition(m) {
+  const S = sharedState.stock;
+  const buckets = [30, 60, 90];
+  const share = Number(S.consumablesShareOfVariable || 0) / 100;
+  const mobiles = enumerateMobiles();
+  const rows = mobiles.map((mob) => {
+    const fin = computeMobileFinancials(mob);
+    const mm = fin.months[m];
+    const usage = (mm.variableCost || 0) * share;
+    const bal = mm.stock || 0;
+    return { name: mob.name, region: mob.region, regionName: mob.regionName, type: mob.type,
+      live: !!mm.isLive, balance: bal, usage, monthsCover: usage > 0 ? bal / usage : 0,
+      aged: ageStockBalance(bal, usage, buckets) };
+  });
+  const regionKeys = Object.keys(mobilesState.regions);
+  const regions = regionKeys.map((k) => {
+    const mine = rows.filter((r) => r.region === k && r.live);
+    const depot = Number((S.depotStock || {})[k] || 0);
+    const usage = mine.reduce((s, r) => s + r.usage, 0);
+    const balance = mine.reduce((s, r) => s + r.balance, 0);
+    const aged = new Array(buckets.length + 1).fill(0);
+    mine.forEach((r) => r.aged.forEach((v, i) => { aged[i] += v; }));
+    // Depot stock turns more slowly than stock on a mobile, so it is aged on
+    // the region's total usage rather than a single vehicle's.
+    const depotAged = ageStockBalance(depot, usage, buckets);
+    depotAged.forEach((v, i) => { aged[i] += v; });
+    return { key: k, name: mobilesState.regions[k].name, mobileBalance: balance, depot, balance: balance + depot, usage, aged };
+  });
+  const entityAged = new Array(buckets.length + 1).fill(0);
+  regions.forEach((r) => r.aged.forEach((v, i) => { entityAged[i] += v; }));
+  const entityBalance = regions.reduce((s, r) => s + r.balance, 0);
+
+  // Outages — work done but stock unavailable, so the cost is still to come.
+  const glass = (S.glassTypes || []).map((g) => ({ id: g.id, label: g.label, unitCost: Number(g.unitCost || 0),
+    qty: Number((g.backlog || [])[m] || 0), value: Number((g.backlog || [])[m] || 0) * Number(g.unitCost || 0) }));
+  const outageQty = glass.reduce((s, g) => s + g.qty, 0);
+  const outageValue = glass.reduce((s, g) => s + g.value, 0);
+
+  // Allocate the backlog across live mobiles in proportion to the assessments
+  // each did, since that is what drove the demand.
+  const liveRows = rows.filter((r) => r.live);
+  const totalUsage = liveRows.reduce((s, r) => s + r.usage, 0);
+  liveRows.forEach((r) => { r.outageShare = totalUsage > 0 ? outageValue * (r.usage / totalUsage) : 0; });
+
+  return { buckets, rows, regions, entityAged, entityBalance, glass, outageQty, outageValue,
+    onOrder: Number((S.moblixOnOrder || [])[m] || 0), inTransit: Number((S.moblixInTransit || [])[m] || 0) };
+}
+// Accrued expense for stock outages, by month — carried on the balance sheet.
+function computeStockAccrual() {
+  const S = sharedState.stock;
+  return range12().map((m) => (S.glassTypes || []).reduce((s, g) => s + Number((g.backlog || [])[m] || 0) * Number(g.unitCost || 0), 0));
+}
+
+function computeDeferredIncome() {
+  const D = sharedState.deferredIncome || { enabled: false, leadMonths: {} };
+  const rates = computeGuudMobilesDeliveryRates();
+  const ent = computeEntityConsolidatedPnL();
+  const vols = { pocx: sharedState.volumePlan.pocx, sioc: sharedState.volumePlan.sioc, dental: ent.totalActiveDental };
+  const rate = { pocx: rates.pocx, sioc: rates.sioc, dental: mobilesState.products.dental.monthlyFee };
+  const out = { assessments: {}, value: {}, assessmentsTotal: [], valueTotal: [] };
+  ["pocx", "sioc", "dental"].forEach((k) => { out.assessments[k] = new Array(12).fill(0); out.value[k] = new Array(12).fill(0); });
+  for (let m = 0; m < 12; m++) {
+    let aTot = 0, vTot = 0;
+    ["pocx", "sioc", "dental"].forEach((k) => {
+      if (!D.enabled) return;
+      const lead = Number((D.leadMonths || {})[k] || 0);
+      let a = 0;
+      for (let j = m + 1; j <= m + lead && j < 12; j++) a += Number(vols[k][j] || 0);
+      out.assessments[k][m] = a;
+      out.value[k][m] = a * rate[k];
+      aTot += a; vTot += out.value[k][m];
+    });
+    out.assessmentsTotal.push(aTot); out.valueTotal.push(vTot);
+  }
+  return out;
+}
+
 function computeGroupConsolidated() {
   const so = computeSupportOfficeFinancials();
+  const deferred = computeDeferredIncome();
+  const stockAccrual = computeStockAccrual();
   const months = [];
   for (let m = 0; m < 12; m++) {
     const stock = so.allMobiles.reduce((s, mf) => s + mf.months[m].stock, 0);
@@ -3348,7 +3618,20 @@ function computeGroupConsolidated() {
       + so.regionFin.reduce((s, rf) => s + rf.months[m].retainedEarnings, 0)
       + so.months[m].retainedEarnings;
     const extendLoan = so.months[m].extendLoanBalance; // only external liability surviving elimination
-    months.push({ stock, stockPocx, stockSioc, stockDental, cash, retainedEarnings, extendLoan, assets: stock + cash, checkBalances: Math.abs((stock + cash) - (extendLoan + retainedEarnings)) < 1 });
+    // Cash received in advance sits in the bank AND as a liability, so the
+    // balance sheet stays in balance while showing both sides.
+    const di = deferred.valueTotal[m];
+    // Stock-outage accrual: the work is done and the cost is already in the
+    // P&L, but it has not been paid, so cash is higher by the same amount and
+    // a liability is carried until the lenses are cut and settled.
+    const accr = stockAccrual[m] || 0;
+    const cashWithDeferred = cash + di + accr;
+    months.push({ stock, stockPocx, stockSioc, stockDental, cash: cashWithDeferred, cashExDeferred: cash,
+      stockAccrual: accr,
+      deferredIncome: di, deferredPocx: deferred.value.pocx[m], deferredSioc: deferred.value.sioc[m], deferredDental: deferred.value.dental[m],
+      prepaidAssessments: deferred.assessmentsTotal[m], prepaidPocx: deferred.assessments.pocx[m], prepaidSioc: deferred.assessments.sioc[m], prepaidDental: deferred.assessments.dental[m],
+      retainedEarnings, extendLoan, assets: stock + cashWithDeferred,
+      checkBalances: Math.abs((stock + cashWithDeferred) - (extendLoan + di + accr + retainedEarnings)) < 1 });
   }
   return { months, so };
 }
@@ -4011,7 +4294,7 @@ function computeMobilesUnitBreakdown() {
         const perVehVol = bucket === "dental" ? 1 : (volOf[bucket][m] / n);
         revenue += bucket === "dental" ? rateOf.dental : perVehVol * rateOf[bucket];
         variable += bucket === "dental" ? 0 : perVehVol * m3.variableCost;
-        loa += bucket === "dental" ? loaForVehicleMonth("dental", 1) : loaForVehicleMonth(bucket, perVehVol);
+        loa += bucket === "dental" ? loaForVehicleMonth("dental", 1, m) : loaForVehicleMonth(bucket, perVehVol, m);
       }
       const rentals = rentalOf(prod) * 12;
       const fuel = fuelOf(prod) * 12;
@@ -4056,6 +4339,851 @@ function computeMobilesUnitBreakdown() {
 
   const entityNP = ent.fy.netProfit;
   return { units, regionRows, soRow, totals, unassigned, entityNP, tie: totals.contribution - entityNP };
+}
+
+// ---- Guud Mobiles: fleet P&L for a single month ----
+// Every mobile that is live in the chosen month as its own column, plus the
+// regional overheads and Support Office, footing to Guud Mobiles' result for
+// that month. Built from the same per-mobile figures the balance sheet uses,
+// so the columns and the entity P&L cannot disagree.
+function computeFleetMonthlyPnL(m) {
+  const mobiles = enumerateMobiles();
+  const ent = computeEntityConsolidatedPnL();
+  const rates = computeGuudMobilesDeliveryRates();
+  const bd = { pocx: rates.pocxBreakdown, sioc: rates.siocBreakdown };
+  const M = { pocx: computeMetrics(mobilesState.products.pocx), sioc: computeMetrics(mobilesState.products.sioc),
+              dental: computeDentalMetrics(mobilesState.products.dental) };
+  const splits = { pocx: splitFixedByCategory(M.pocx.fixedLines), sioc: splitFixedByCategory(M.sioc.fixedLines),
+                   dental: splitFixedByCategory(M.dental.fixedLines) };
+  const lineSum = (prod, test) => resolveFixedLines(prod).reduce((s, l) => s + (test(l) ? Number(l.value || 0) : 0), 0);
+  const PROD = { pocx: mobilesState.products.pocx, sioc: mobilesState.products.sioc, dental: mobilesState.products.dental };
+  const activeOf = { pocx: ent.totalActivePocx, sioc: ent.totalActiveSioc, dental: ent.totalActiveDental };
+  const volOf = { pocx: sharedState.volumePlan.pocx, sioc: sharedState.volumePlan.sioc };
+
+  const cols = mobiles.map((mob) => {
+    const fin = computeMobileFinancials(mob);
+    const mm = fin.months[m];
+    const t = mob.type, prod = PROD[t];
+    const n = activeOf[t][m] || 0;
+    const perVehVol = t === "dental" ? 1 : (n ? volOf[t][m] / n : 0);
+    // Split the all-in rate the way the P&L does: Service Delivery is revenue,
+    // Regional Support and Support Office recovery are other income.
+    let revenue = 0, otherIncome = 0;
+    if (t === "dental") { revenue = mm.isLive ? mobilesState.products.dental.monthlyFee : 0; }
+    else if (mm.isLive) {
+      revenue = perVehVol * bd[t].serviceDelivery;
+      otherIncome = perVehVol * (bd[t].regionalSupport + bd[t].supportOffice);
+    }
+    const live = !!mm.isLive;
+    const loa = live ? loaForVehicleMonth(t, perVehVol, m) : 0;
+    const rentals = live ? lineSum(prod, (l) => /Rental/i.test(l.label)) : 0;
+    const fuel = live ? lineSum(prod, (l) => /Fuel/i.test(l.label)) : 0;
+    const salaries = live ? Math.max(0, mm.fixedCost - loa - rentals - fuel - (M[t].totalFixed - splits[t].salary - lineSum(prod, (l) => /Rental/i.test(l.label)) - lineSum(prod, (l) => /Fuel/i.test(l.label)))) : 0;
+    const otherFixed = live ? Math.max(0, mm.fixedCost - salaries - loa - rentals - fuel) : 0;
+    const solLabel = { pocx: "Employer Solutions", sioc: "Community Health", dental: "Dental" }[t] || "";
+    const allInRate = t === "dental" ? mobilesState.products.dental.monthlyFee : (t === "pocx" ? rates.pocx : rates.sioc);
+    return { name: mob.name, region: mob.regionName, type: t, live, solLabel,
+      basis: t === "dental" ? "monthly" : "assessments",
+      assessments: t === "dental" ? 0 : (live ? perVehVol : 0),
+      rate: live ? allInRate : 0,
+      revenue, otherIncome, variableCost: mm.variableCost,
+      salaries, loa, rentals, fuel, otherFixed, fixedCost: mm.fixedCost, netProfit: mm.netProfit };
+  });
+
+  const regionRows = Object.entries(mobilesState.regions).map(([k, rg]) => {
+    const oh = overheadForMonth(rg, m);
+    return { name: rg.name, region: "", type: "overhead", live: true, solLabel: "Regional overhead", basis: "none", assessments: 0, rate: 0, revenue: 0, otherIncome: 0, variableCost: 0,
+      salaries: oh, loa: 0, rentals: 0, fuel: 0, otherFixed: 0, fixedCost: oh, netProfit: -oh };
+  });
+  const so = computeSupportOfficeMetrics(mobilesState.supportOffice);
+  const soRow = { name: "Support Office", region: "", type: "support", live: true, solLabel: "Support Office", basis: "none", assessments: 0, rate: 0, revenue: 0, otherIncome: 0, variableCost: 0,
+    salaries: so.monthlySalaryCost[m], loa: 0, rentals: 0, fuel: 0, otherFixed: so.totalTech,
+    fixedCost: so.monthlyCost[m], netProfit: -so.monthlyCost[m] };
+
+  const all = cols.concat(regionRows, [soRow]);
+  const F = ["assessments", "revenue", "otherIncome", "variableCost", "salaries", "loa", "rentals", "fuel", "otherFixed", "fixedCost", "netProfit"];
+  const totals = {}; F.forEach((f) => { totals[f] = all.reduce((s, x) => s + (x[f] || 0), 0); });
+  const em = ent.months[m];
+  return { cols, regionRows, soRow, totals, entityNP: em.netProfit, tie: totals.netProfit - em.netProfit };
+}
+
+/* ============================================================
+   GUUD MOBILES — MANAGEMENT PACK
+   One print-ready document and one Excel workbook, both covering
+   the same eight sections in the same order.
+   ============================================================ */
+const MOBILES_PACK_SECTIONS = [
+  { key: "entity", title: "Entity Consolidated P&L", render: () => renderEntityConsolidatedCard() },
+  { key: "fleetpnl", title: "Fleet P&L — Monthly", render: () => renderFleetMonthlyPnLCard() },
+  { key: "groupconsolidated", title: "Group Balance Sheet & Cash Flow", render: () => renderGroupConsolidatedCard() },
+  { key: "opreadiness", title: "Operational Readiness", render: () => renderOperationalReadinessCard() },
+  { key: "stock", title: "Stock — Ageing, Outages & Orders", render: () => renderStockCard() },
+  { key: "clientpnl", title: "Client P&L", render: () => renderClientPnLCard() },
+  { key: "nc", title: "Northern Cape", render: () => renderRegionOutput("nc") },
+  { key: "gt", title: "Gauteng", render: () => renderRegionOutput("gt") },
+  { key: "kzn", title: "KwaZulu-Natal", render: () => renderRegionOutput("kzn") },
+  { key: "supportoffice", title: "Support Office", render: () => renderSupportOfficeCard() },
+];
+
+function printMobilesManagementPack() {
+  const now = new Date();
+  const stamp = now.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }) + " " +
+    now.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
+  // Operational Readiness carries payroll, so it is only included when
+  // payroll is unlocked — otherwise the pack would leak what the PIN hides.
+  const sections = MOBILES_PACK_SECTIONS.filter((s) => s.key !== "opreadiness" || payrollUnlocked);
+  const omitted = MOBILES_PACK_SECTIONS.length - sections.length;
+
+  const body = sections.map((s, i) => `
+    <div style="${i > 0 ? "break-before:page; page-break-before:always;" : ""} margin-bottom:18px;">
+      <div style="font-family:var(--font-head); font-size:15px; font-weight:700; color:var(--maroon); border-bottom:2px solid var(--teal); padding-bottom:5px; margin-bottom:12px;">
+        ${i + 1}. ${s.title}
+      </div>
+      ${s.render()}
+    </div>`).join("");
+
+  const stage = document.getElementById("printStage");
+  stage.innerHTML = `
+    <div class="print-header">
+      <div class="print-logo">${GUUD_PRINT_LOGO_SVG}</div>
+      <div class="print-title-block">
+        <div class="print-eyebrow">Guud Mobiles</div>
+        <h1>Management Pack</h1>
+      </div>
+      <div class="print-meta">FY Jul 2026 – Jun 2027<br>Fleet P&amp;L month: ${FY_MONTH_KEYS[fleetPnlMonthIdx]}<br>Generated ${stamp}</div>
+    </div>
+    <div style="font-size:11px; color:var(--gray); margin-bottom:14px;">
+      Contents: ${sections.map((s, i) => `${i + 1}. ${s.title}`).join(" &nbsp;·&nbsp; ")}
+      ${omitted ? `<br><b style="color:var(--maroon);">Operational Readiness omitted — unlock payroll before printing to include it.</b>` : ""}
+    </div>
+    <div class="print-scale-wrap" id="printScaleWrap">${body}</div>`;
+
+  document.body.classList.add("printing-section");
+  requestAnimationFrame(() => {
+    const wrap = document.getElementById("printScaleWrap");
+    let maxWidth = 0;
+    wrap.querySelectorAll("table").forEach((t) => { maxWidth = Math.max(maxWidth, t.scrollWidth); });
+    const PRINTABLE_WIDTH_PX = 1040;
+    if (maxWidth > PRINTABLE_WIDTH_PX) {
+      const scale = PRINTABLE_WIDTH_PX / maxWidth;
+      wrap.style.transform = `scale(${scale})`;
+      wrap.style.width = `${100 / scale}%`;
+    }
+    window.print();
+  });
+}
+
+// Any non-finite number reaching a worksheet corrupts the file, so every
+// cell is coerced before it is written.
+function packSheet(aoa) {
+  return XLSX.utils.aoa_to_sheet((aoa || []).map((row) => (row || []).map((v) => {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "number" && !Number.isFinite(v)) return 0;
+    return v;
+  })));
+}
+
+function buildMobilesManagementPackWorkbook() {
+  const wb = XLSX.utils.book_new();
+  const now = new Date().toLocaleString("en-ZA");
+  const ent = computeEntityConsolidatedPnL();
+  const gc = computeGroupConsolidated();
+  const so = computeSupportOfficeMetrics(mobilesState.supportOffice);
+  const soFin = computeSupportOfficeFinancials();
+  const pr = computePayroll();
+  const m = fleetPnlMonthIdx;
+
+  XLSX.utils.book_append_sheet(wb, packSheet([
+    ["Guud Mobiles — Management Pack"],
+    ["Generated " + now],
+    ["FY Jul 2026 – Jun 2027"],
+    ["Fleet P&L month: " + FY_MONTH_KEYS[m]],
+    [],
+    ["Contents"],
+    ...MOBILES_PACK_SECTIONS.map((s, i) => [(i + 1) + ". " + s.title]),
+    [],
+    ["Figures are in Rand unless a sheet states otherwise."],
+  ]), "Contents");
+
+  // 1. Entity Consolidated P&L
+  {
+    const f = ent.fy, rows = [
+      { label: "Revenue", values: ent.months.map((x) => x.revenue), fy: f.revenue },
+      { label: "Other Income — Regional", values: ent.months.map((x) => x.otherIncomeRegional || 0), fy: f.otherIncomeRegional || 0 },
+      { label: "Other Income — Support Office", values: ent.months.map((x) => x.otherIncomeSupportOffice || 0), fy: f.otherIncomeSupportOffice || 0 },
+      { label: "Variable Costs", values: ent.months.map((x) => -x.variableCost), fy: -f.variableCost },
+      { label: "Salaries", values: ent.months.map((x) => -x.salaryCost), fy: -f.salaryCost },
+      { label: "Other Fixed Costs", values: ent.months.map((x) => -x.otherFixedCost), fy: -f.otherFixedCost },
+      { label: "Net Profit / (Loss)", values: ent.months.map((x) => x.netProfit), fy: f.netProfit },
+    ];
+    XLSX.utils.book_append_sheet(wb, packSheet(monthlyTableAOA("Guud Mobiles — Entity Consolidated P&L", rows)), "1. Entity Consol P&L");
+  }
+
+  // 2. Fleet P&L for the selected month
+  {
+    const d = computeFleetMonthlyPnL(m);
+    const cols = d.cols.filter((x) => x.live).concat(d.regionRows, [d.soRow]);
+    const aoa = [["Guud Mobiles — Fleet P&L — " + FY_MONTH_KEYS[m]], [],
+      ["", ...cols.map((x) => x.name), "Total"],
+      ["Region", ...cols.map((x) => x.region || ""), ""],
+      ["Solution", ...cols.map((x) => x.solLabel || ""), ""],
+      ["Assessments", ...cols.map((x) => (x.basis === "assessments" ? Math.round(x.assessments) : "")), Math.round(d.totals.assessments)],
+      ["Charge per assessment / month", ...cols.map((x) => x.rate || ""), ""],
+    ];
+    const line = (label, f, neg) => aoa.push([label, ...cols.map((x) => (neg ? -1 : 1) * (x[f] || 0)), (neg ? -1 : 1) * (d.totals[f] || 0)]);
+    line("Revenue — service delivery", "revenue");
+    line("Other income", "otherIncome");
+    aoa.push(["Total income", ...cols.map((x) => x.revenue + x.otherIncome), d.totals.revenue + d.totals.otherIncome]);
+    line("Variable costs", "variableCost", true);
+    aoa.push(["Gross profit", ...cols.map((x) => x.revenue + x.otherIncome - x.variableCost), d.totals.revenue + d.totals.otherIncome - d.totals.variableCost]);
+    line("Salaries", "salaries", true); line("LOAs", "loa", true); line("Rentals", "rentals", true);
+    line("Fuel", "fuel", true); line("Other fixed costs", "otherFixed", true); line("Total fixed costs", "fixedCost", true);
+    line("Net profit / (loss)", "netProfit");
+    XLSX.utils.book_append_sheet(wb, packSheet(aoa), "2. Fleet P&L Monthly");
+  }
+
+  // 3. Group Balance Sheet & Cash Flow
+  {
+    const dd = computeDeferredIncome();
+    const rows = [
+      { label: "Cash & Bank", values: gc.months.map((x) => x.cash), fy: gc.months[11].cash },
+      { label: "Stock", values: gc.months.map((x) => x.stock), fy: gc.months[11].stock },
+      { label: "TOTAL ASSETS", values: gc.months.map((x) => x.assets), fy: gc.months[11].assets },
+      { label: "Xtend Shareholder Loan", values: gc.months.map((x) => x.extendLoan), fy: gc.months[11].extendLoan },
+      { label: "Income Received In Advance", values: gc.months.map((x) => x.deferredIncome), fy: gc.months[11].deferredIncome },
+      { label: "  — Employer Solutions (POCx)", values: dd.value.pocx, fy: dd.value.pocx[11] },
+      { label: "  — Community Health General (SIOC)", values: dd.value.sioc, fy: dd.value.sioc[11] },
+      { label: "  — Community Health Dental (SIOC)", values: dd.value.dental, fy: dd.value.dental[11] },
+      { label: "Retained Earnings", values: gc.months.map((x) => x.retainedEarnings), fy: gc.months[11].retainedEarnings },
+      { label: "Outstanding assessments — POCx", values: dd.assessments.pocx, fy: dd.assessments.pocx[11] },
+      { label: "Outstanding assessments — SIOC", values: dd.assessments.sioc, fy: dd.assessments.sioc[11] },
+      { label: "Outstanding assessments — Dental units", values: dd.assessments.dental, fy: dd.assessments.dental[11] },
+    ];
+    XLSX.utils.book_append_sheet(wb, packSheet(monthlyTableAOA("Guud Mobiles — Group Balance Sheet & Cash Flow", rows)), "3. Group BS-CF");
+  }
+
+  // 4. Operational Readiness — payroll, so gated
+  {
+    const aoa = [["Guud Mobiles — Operational Readiness"], []];
+    if (!payrollUnlocked) {
+      aoa.push(["Payroll is locked. Unlock it with the access PIN before exporting to include this sheet."]);
+    } else {
+      aoa.push(["Fleet", "Vehicle", "Vehicle Type", "Region", ...PAYROLL_ROLE_COLUMNS, "Total"]);
+      pr.fleets.forEach((f) => {
+        const g = pr.grid[f.fleet] || {};
+        aoa.push([f.fleet, f.vehicle || "", f.vehicleType || "", f.dashRegion || "",
+          ...PAYROLL_ROLE_COLUMNS.map((r) => g[r] || 0), g.total || 0]);
+      });
+      aoa.push([]);
+      aoa.push(["", "", "", "TOTAL", ...PAYROLL_ROLE_COLUMNS.map((r) => pr.roleTotals[r] || 0), pr.grandTotal]);
+    }
+    XLSX.utils.book_append_sheet(wb, packSheet(aoa), "4. Operational Readiness");
+  }
+
+  // 5-7. Regions
+  Object.entries(mobilesState.regions).forEach(([key, region], i) => {
+    const r = computeRegionalPnL(region);
+    const rows = [
+      { label: "Revenue", values: r.months.map((x) => x.revenue), fy: r.fy.revenue },
+      { label: "Other Income — Regional", values: r.months.map((x) => x.otherIncomeRegional || 0), fy: r.fy.otherIncomeRegional || 0 },
+      { label: "Variable Costs", values: r.months.map((x) => -x.variableCost), fy: -r.fy.variableCost },
+      { label: "Vehicle Fixed Costs", values: r.months.map((x) => -x.vehicleFixed), fy: -r.fy.vehicleFixed },
+      { label: "Regional Overhead", values: r.months.map((x) => -x.regionalOverhead), fy: -r.fy.regionalOverhead },
+      { label: "Field Operational Profit", values: r.months.map((x) => x.netProfit), fy: r.fy.netProfit },
+    ];
+    XLSX.utils.book_append_sheet(wb, packSheet(monthlyTableAOA(region.name + " — Regional P&L", rows)), `${5 + i}. ${region.name}`.slice(0, 31));
+  });
+
+  // 8. Support Office
+  {
+    const rows = [
+      { label: "Salaries", values: so.monthlySalaryCost, fy: so.monthlySalaryCost.reduce((s, v) => s + v, 0) },
+      { label: "Technology Subscriptions", values: new Array(12).fill(so.totalTech), fy: so.totalTech * 12 },
+      { label: "Total Support Office Cost", values: so.monthlyCost, fy: so.monthlyCost.reduce((s, v) => s + v, 0) },
+      { label: "Cash Position", values: soFin.months.map((x) => x.cash), fy: soFin.months[11].cash },
+    ];
+    const aoa = monthlyTableAOA("Guud Mobiles — Support Office", rows);
+    aoa.push([]);
+    aoa.push(["Roles"]);
+    aoa.push(["Name", "Division", "Status", "Monthly Salary", "Start"]);
+    mobilesState.supportOffice.roles.forEach((r) => aoa.push([r.name, r.division, r.status, r.salary, r.startMonth || "From July"]));
+    aoa.push([]);
+    aoa.push(["Technology Subscriptions"]);
+    mobilesState.supportOffice.techSubscriptions.forEach((t) => aoa.push([t.name, t.cost]));
+    XLSX.utils.book_append_sheet(wb, packSheet(aoa), "8. Support Office");
+  }
+
+  return wb;
+}
+
+function renderSarsDebt() {
+  const host = document.getElementById("sarsHost");
+  const S = sharedState.sarsDebt;
+  const d = computeSarsDebt();
+  const ents = [{ key: "", name: "— not in this model —" }].concat(pipelineEntityOptions());
+  const R0 = (v) => v === 0 ? "—" : fmtR(v);
+
+  const rowHTML = (r) => `<tr data-sars="${r.id}"${r.entity ? "" : ' style="background:#FFF8F8;"'}>
+    <td style="padding:4px 6px; color:var(--gray); font-size:10px;">${r.group}</td>
+    <td style="padding:4px 6px;"><input type="text" data-f="company" value="${(r.company || "").replace(/"/g, "&quot;")}" style="width:200px; font-size:11px;"></td>
+    <td style="padding:4px 6px;"><select data-f="entity" style="font-size:10.5px; max-width:150px;">${ents.map((e) => `<option value="${e.key}" ${r.entity === e.key ? "selected" : ""}>${e.name}</option>`).join("")}</select></td>
+    <td style="padding:4px 6px;"><input type="number" data-f="vat" value="${r.vat}" style="width:96px; font-size:11px; text-align:right;"></td>
+    <td style="padding:4px 6px;"><input type="number" data-f="paye" value="${r.paye}" style="width:96px; font-size:11px; text-align:right;"></td>
+    <td style="padding:4px 6px;"><input type="number" data-f="stc" value="${r.stc}" style="width:96px; font-size:11px; text-align:right;"></td>
+    <td style="padding:4px 8px; text-align:right; font-weight:700;">${fmtR(r.opening)}</td>
+    <td style="padding:4px 6px;"><input type="number" data-f="monthlyPayment" value="${r.monthlyPayment}" style="width:90px; font-size:11px; text-align:right;"></td>
+    <td style="padding:4px 6px;"><input type="number" data-f="periods" value="${r.periods}" style="width:52px; font-size:11px; text-align:right;"></td>
+    <td style="padding:4px 8px; text-align:right;">${fmtR(r.totalInterest)}</td>
+    <td style="padding:4px 8px; text-align:right; font-weight:700; ${r.closing > r.opening ? "color:var(--red);" : ""}">${fmtR(r.closing)}</td>
+    <td style="padding:4px 6px; color:var(--gray); font-size:9.5px; max-width:180px;">${r.note || ""}</td>
+  </tr>`;
+
+  const entityRows = pipelineEntityOptions().map((e) => {
+    const b = d.byEntity[e.key];
+    if (!b) return "";
+    return `<tr><td style="padding:5px 8px;">${e.name}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtR(b.opening)}</td>
+      ${b.balances.map((v) => `<td style="padding:5px 4px; text-align:right;">${fmtK(v)}</td>`).join("")}
+      <td style="padding:5px 8px; text-align:right; font-weight:700;">${fmtR(b.payments.reduce((s, v) => s + v, 0))}</td></tr>`;
+  }).join("");
+
+  host.innerHTML = `
+    <div class="card">
+      <button class="print-section-btn" onclick="printGuudSection(this)">🖨 Print to PDF</button>
+      <div class="eyebrow">Xtend Ecosystem</div>
+      <h3>SARS Debt</h3>
+      <div class="hint" style="margin-bottom:12px;">Tax debt by company and by type, as at August 2026. Interest accrues monthly on the outstanding balance; where a payment plan is in place it draws the balance down over its remaining periods. Companies shaded pink do not correspond to an entity in this model — they are carried so the Group total still ties to the SARS summary, but they do not reach any balance sheet here.</div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+        <div style="flex:1 1 180px; background:var(--light); border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Total SARS debt</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700; color:var(--red);">${fmtR(d.totals.opening)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">VAT ${fmtK(d.totals.vat)} · PAYE ${fmtK(d.totals.paye)} · STC ${fmtK(d.totals.stc)}</div>
+        </div>
+        <div style="flex:1 1 180px; background:var(--light); border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">In this model</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700;">${fmtR(d.mappedOpening)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">${d.mapped.length} companies mapped to entities</div>
+        </div>
+        <div style="flex:1 1 180px; background:#FDECEC; border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Outside this model</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700; color:var(--red);">${fmtR(d.unmappedOpening)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">${d.unmapped.length} companies not modelled</div>
+        </div>
+        <div style="flex:1 1 180px; background:var(--light); border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Closing balance Jun 2027</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700; color:${d.totals.closing > d.totals.opening ? "var(--red)" : "var(--ink)"};">${fmtR(d.totals.closing)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">after ${fmtK(d.totals.totalPaid)} repaid, ${fmtK(d.totals.totalInterest)} interest</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:14px; align-items:flex-end; margin-bottom:14px;">
+        <div style="display:flex; flex-direction:column; gap:3px;">
+          <label style="font-size:10px; color:var(--gray); font-weight:700;">SARS interest rate (% per year)</label>
+          <input type="number" step="0.25" id="sarsRate" value="${S.interestRate}" style="width:110px; font-size:13px; padding:4px 8px; text-align:right; font-weight:700;">
+        </div>
+        <div style="font-size:10.5px; color:var(--gray);">Applied monthly to any balance still outstanding.</div>
+      </div>
+
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:11px; min-width:1320px;">
+        <thead><tr style="background:var(--ink); color:#fff;">
+          <td style="padding:5px 6px;">Group</td><td style="padding:5px 6px;">Company</td><td style="padding:5px 6px;">Maps to</td>
+          <td style="padding:5px 6px; text-align:right;">VAT</td><td style="padding:5px 6px; text-align:right;">PAYE</td><td style="padding:5px 6px; text-align:right;">STC</td>
+          <td style="padding:5px 8px; text-align:right;">Opening</td>
+          <td style="padding:5px 6px; text-align:right;">Monthly plan</td><td style="padding:5px 6px; text-align:right;">Periods</td>
+          <td style="padding:5px 8px; text-align:right;">Interest FY</td><td style="padding:5px 8px; text-align:right;">Closing</td><td style="padding:5px 6px;">Note</td>
+        </tr></thead>
+        <tbody>${d.rows.map(rowHTML).join("")}</tbody>
+        <tfoot><tr style="background:var(--light); font-weight:700; border-top:2px solid var(--ink);">
+          <td colspan="3" style="padding:6px 8px;">TOTAL — all companies</td>
+          <td style="padding:6px; text-align:right;">${fmtR(d.totals.vat)}</td>
+          <td style="padding:6px; text-align:right;">${fmtR(d.totals.paye)}</td>
+          <td style="padding:6px; text-align:right;">${fmtR(d.totals.stc)}</td>
+          <td style="padding:6px 8px; text-align:right;">${fmtR(d.totals.opening)}</td>
+          <td colspan="2"></td>
+          <td style="padding:6px 8px; text-align:right;">${fmtR(d.totals.totalInterest)}</td>
+          <td style="padding:6px 8px; text-align:right;">${fmtR(d.totals.closing)}</td><td></td>
+        </tr></tfoot>
+      </table>
+      </div>
+
+      <div class="section-label" style="margin-top:20px;">Balance by modelled entity — month end</div>
+      <div style="font-size:10.5px; font-style:italic; color:var(--gray); margin-bottom:8px;">These balances are what will sit on each entity's balance sheet, and the repayments are what will hit its cash flow. R'000.</div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:1080px;">
+        <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Entity</td><td style="padding:5px 8px; text-align:right;">Opening</td>${FY_MONTH_KEYS.map((k) => `<td style="padding:5px 4px; text-align:right;">${k.split(" ")[0]}</td>`).join("")}<td style="padding:5px 8px; text-align:right;">Repaid FY</td></tr></thead>
+        <tbody>${entityRows}</tbody>
+      </table>
+      </div>
+      ${(() => {
+        const SOURCE_TOTAL = 32949407.41;
+        const diff = d.totals.opening - SOURCE_TOTAL;
+        const ok = Math.abs(diff) < 1;
+        return `<div style="margin-top:14px; padding:12px 14px; background:${ok ? "var(--light)" : "#FDECEC"}; border-left:4px solid ${ok ? "var(--teal)" : "var(--red)"}; border-radius:6px;">
+          <div style="font-weight:700; font-size:11.5px; margin-bottom:6px; color:var(--maroon);">Reconciliation to the SARS summary</div>
+          <table style="border-collapse:collapse; font-size:11px;">
+            <tr><td style="padding:3px 14px 3px 0;">Model total</td><td style="text-align:right; font-weight:700;">${fmtR(d.totals.opening)}</td></tr>
+            <tr><td style="padding:3px 14px 3px 0;">Source grand total</td><td style="text-align:right;">${fmtR(SOURCE_TOTAL)}</td></tr>
+            <tr style="border-top:1px solid var(--gray);"><td style="padding:3px 14px 3px 0; font-weight:700;">Difference</td><td style="text-align:right; font-weight:700; color:${ok ? "var(--ink)" : "var(--red)"};">${fmtR(diff)}</td></tr>
+          </table>
+          ${ok ? "" : `<div style="font-size:10.5px; color:var(--gray); font-style:italic; margin-top:6px;">
+            The Guud SA tab in the source does not add up: its six company rows total ${fmtR(4657750.88)} against a stated group total of ${fmtR(3871842.67)}, a gap of ${fmtR(785908.21)}. The model uses the company rows, since those are what map to entities. Worth checking whether a credit is missing from the detail or the group total is stale.</div>`}
+        </div>`;
+      })()}
+      <footer class="source-note">Source: SARS Debt Summary, August 2026. STC is subject to review once audits complete, and the AMS VAT position excludes an unsubmitted June return with an estimated R4m effect — both are noted in the source and neither is adjusted here.</footer>
+    </div>`;
+
+  const rate = document.getElementById("sarsRate");
+  if (rate) rate.addEventListener("input", (e) => { S.interestRate = Number(e.target.value || 0); renderSarsDebt(); });
+  host.querySelectorAll("tr[data-sars]").forEach((tr) => {
+    const r = S.entries.find((x) => x.id === Number(tr.dataset.sars));
+    tr.querySelectorAll("[data-f]").forEach((inp) => {
+      inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", (ev) => {
+        const f = ev.target.dataset.f;
+        r[f] = ["vat", "paye", "stc", "monthlyPayment", "periods"].includes(f) ? Number(ev.target.value || 0) : ev.target.value;
+        renderSarsDebt(); renderSummary();
+      });
+    });
+  });
+}
+
+// Client P&L on Guud Mobiles' own basis: the all-in rate it bills Guud SA,
+// less the direct cost of serving that client. Regional overhead and Support
+// Office are deliberately excluded — this is a contribution, not a net
+// profit, so no arbitrary allocation is embedded in it.
+function computeClientPnL(clientId) {
+  const cl = (sharedState.clients || []).find((x) => x.id === clientId);
+  if (!cl) return null;
+  const rates = computeGuudMobilesDeliveryRates();
+  const ent = computeEntityConsolidatedPnL();
+  const PROD = { pocx: mobilesState.products.pocx, sioc: mobilesState.products.sioc, dental: mobilesState.products.dental };
+  const M = { pocx: computeMetrics(PROD.pocx), sioc: computeMetrics(PROD.sioc), dental: computeDentalMetrics(PROD.dental) };
+  const SP = { pocx: splitFixedByCategory(M.pocx.fixedLines), sioc: splitFixedByCategory(M.sioc.fixedLines), dental: splitFixedByCategory(M.dental.fixedLines) };
+  const lineSum = (prod, test) => resolveFixedLines(prod).reduce((s, l) => s + (test(l) ? Number(l.value || 0) : 0), 0);
+  const vols = { pocx: sharedState.volumePlan.pocx, sioc: sharedState.volumePlan.sioc, dental: ent.totalActiveDental };
+  const active = { pocx: ent.totalActivePocx, sioc: ent.totalActiveSioc, dental: ent.totalActiveDental };
+  const bd = { pocx: rates.pocxBreakdown, sioc: rates.siocBreakdown };
+  // Actual payroll carried by each staffed vehicle, by solution. Vehicles
+  // already rolled out are costed at what they actually pay; only vehicles
+  // still being introduced fall back to the modelled crew cost.
+  const prC = computePayroll();
+  const staffedByBucket = { pocx: [], sioc: [], dental: [] };
+  prC.fleets.filter((f) => !f.isOverhead && f.vehicleType && ["nc", "gt", "kzn"].includes(f.dashRegion)).forEach((f) => {
+    const meta = payrollVehicleTypeMeta(f.vehicleType);
+    const bk = meta ? meta.bucket : null;
+    if (!bk || !staffedByBucket[bk]) return;
+    const g = prC.grid[f.fleet] || {};
+    let s = 0;
+    PAYROLL_ROLE_COLUMNS.forEach((role) => { if (role !== "Other / Head Office") s += g[role] || 0; });
+    if (s > 0) staffedByBucket[bk].push(s);
+  });
+
+  const blank = () => new Array(12).fill(0);
+  const per = {};
+  ["pocx", "sioc", "dental"].forEach((k) => {
+    const share = Number((cl.allocations || {})[k] || 0) / 100;
+    const r = { share, assessments: blank(), vehicles: blank(), revenue: blank(), otherIncome: blank(),
+      variable: blank(), salaries: blank(), loa: blank(), rentals: blank(), fuel: blank(), otherFixed: blank() };
+    if (share > 0) {
+      for (let m = 0; m < 12; m++) {
+        const n = active[k][m] || 0;
+        const vol = (vols[k][m] || 0) * share;
+        r.assessments[m] = k === "dental" ? vol : vol;
+        r.vehicles[m] = n * share;
+        if (k === "dental") {
+          r.revenue[m] = vol * PROD.dental.monthlyFee;
+        } else {
+          // Service delivery only. The regional support and Support Office
+          // slices of the rate fund overheads excluded from this P&L, so
+          // taking them as income here would flatter the client.
+          r.revenue[m] = vol * bd[k].serviceDelivery;
+          r.variable[m] = vol * M[k].variableCost;
+        }
+        // Direct vehicle costs follow the share of the fleet the client uses.
+        const perVehVol = n ? (vols[k][m] || 0) / n : 0;
+        const loaPer = k === "dental" ? loaForVehicleMonth("dental", 1, m) : loaForVehicleMonth(k, perVehVol, m);
+        const rentPer = lineSum(PROD[k], (l) => /Rental/i.test(l.label));
+        const fuelPer = lineSum(PROD[k], (l) => /Fuel/i.test(l.label));
+        const otherPer = M[k].totalFixed - SP[k].salary - rentPer - fuelPer;
+        const veh = r.vehicles[m];
+        // Staffed vehicles at actual payroll; anything beyond the staffed
+        // fleet is still being introduced, so it carries the modelled crew
+        // cost until people are allocated to it.
+        const staffed = staffedByBucket[k] || [];
+        let salTotal = 0;
+        for (let i = 0; i < n; i++) salTotal += i < staffed.length ? staffed[i] : SP[k].salary;
+        r.salaries[m] = salTotal * share;
+        r.staffedCount = Math.min(n, staffed.length);
+        r.forecastCount = Math.max(0, n - staffed.length);
+        r.loa[m] = veh * loaPer;
+        r.rentals[m] = veh * rentPer;
+        r.fuel[m] = veh * fuelPer;
+        r.otherFixed[m] = veh * otherPer;
+      }
+    }
+    per[k] = r;
+  });
+
+  const add = (f) => range12().map((m) => ["pocx", "sioc", "dental"].reduce((s, k) => s + per[k][f][m], 0));
+  const totals = {};
+  ["assessments", "vehicles", "revenue", "otherIncome", "variable", "salaries", "loa", "rentals", "fuel", "otherFixed"].forEach((f) => { totals[f] = add(f); });
+  totals.income = range12().map((m) => totals.revenue[m] + totals.otherIncome[m]);
+  totals.directCost = range12().map((m) => totals.variable[m] + totals.salaries[m] + totals.loa[m] + totals.rentals[m] + totals.fuel[m] + totals.otherFixed[m]);
+  totals.contribution = range12().map((m) => totals.income[m] - totals.directCost[m]);
+  const sum = (a) => a.reduce((s, v) => s + v, 0);
+  const fy = {}; Object.keys(totals).forEach((f) => { fy[f] = sum(totals[f]); });
+  return { client: cl, per, totals, fy };
+}
+
+function renderClientPnLCard() {
+  const clients = sharedState.clients || [];
+  if (!clients.length) return `<div class="card"><h3>Client P&amp;L</h3><div class="hint">No clients defined yet.</div></div>`;
+  const cid = clientPnLId && clients.some((c) => c.id === clientPnLId) ? clientPnLId : clients[0].id;
+  const d = computeClientPnL(cid);
+  const cl = d.client;
+  const solLabel = { pocx: "Employer Solutions (POCx)", sioc: "Community Health General (SIOC)", dental: "Community Health Dental (SIOC)" };
+  const row = (label, arr, o) => {
+    o = o || {};
+    const sign = o.negate ? -1 : 1;
+    const tot = arr.reduce((s, v) => s + v, 0) * sign;
+    return `<tr style="${o.bold ? "font-weight:700;" : ""}${o.fill ? "background:" + o.fill + ";" : ""}${o.top ? "border-top:2px solid var(--ink);" : ""}">
+      <td style="padding:5px 8px; white-space:nowrap;${o.indent ? "padding-left:20px;" : ""}">${label}</td>
+      ${arr.map((v) => `<td style="padding:5px 5px; text-align:right;${sign * v < 0 ? "color:var(--red);" : ""}">${v === 0 ? "—" : (o.plain ? Math.round(v).toLocaleString("en-ZA") : fmtK(sign * v))}</td>`).join("")}
+      <td style="padding:5px 8px; text-align:right; font-weight:700;${tot < 0 ? "color:var(--red);" : ""}">${o.plain ? Math.round(tot).toLocaleString("en-ZA") : fmtK(tot)}</td></tr>`;
+  };
+  const active = ["pocx", "sioc", "dental"].filter((k) => d.per[k].share > 0);
+
+  return `
+    <div class="card">
+      <button class="print-section-btn" onclick="printGuudSection(this)">🖨 Print to PDF</button>
+      <div class="eyebrow">Guud Mobiles — Client</div>
+      <h3>${cl.name} — Client P&amp;L</h3>
+      <div class="hint" style="margin-bottom:12px;">Direct revenue against direct cost, on a matched basis. Revenue is the <b>service delivery</b> component of the rate only — the regional support and Support Office slices are excluded, because the overheads they fund are excluded too. Costs are only what the assessments and the vehicles themselves incur. The result is a <b>contribution</b>: what this client leaves over to cover regional and Support Office overhead. Figures in R'000.</div>
+      <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <label style="font-weight:700; font-size:12px;">Client:</label>
+        <select id="clientPnLSelect" style="font-size:13px; padding:4px 8px; font-weight:600;">${clients.map((c) => `<option value="${c.id}" ${c.id === cid ? "selected" : ""}>${c.name}</option>`).join("")}</select>
+        <span style="font-size:10.5px; color:var(--gray);">${cl.note || ""}</span>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+        <div style="flex:1 1 180px; background:var(--light); border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Direct revenue FY</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700;">${fmtR(d.fy.income)}</div></div>
+        <div style="flex:1 1 180px; background:var(--light); border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Direct costs FY</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700; color:var(--red);">${fmtR(d.fy.directCost)}</div></div>
+        <div style="flex:1 1 180px; background:${d.fy.contribution < 0 ? "#FDECEC" : "var(--light)"}; border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Contribution FY</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700; color:${d.fy.contribution < 0 ? "var(--red)" : "var(--ink)"};">${fmtR(d.fy.contribution)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">${d.fy.income ? ((d.fy.contribution / d.fy.income) * 100).toFixed(1) + "% of income" : "—"}</div></div>
+      </div>
+      ${(() => {
+        const parts = active.map((k) => {
+          const s = d.per[k].staffedCount || 0, f = d.per[k].forecastCount || 0;
+          return `${solLabel[k]}: ${s} staffed at actual payroll${f ? `, ${f} still being introduced at modelled cost` : ""}`;
+        });
+        return `<div style="font-size:10.5px; color:var(--gray); font-style:italic; margin-bottom:8px;">Crew salaries: ${parts.join(" · ")}.</div>`;
+      })()}
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:1060px;">
+        <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">R'000</td>${FY_MONTH_KEYS.map((k) => `<td style="padding:5px 5px; text-align:right;">${k.split(" ")[0]}</td>`).join("")}<td style="padding:5px 8px; text-align:right;">FY</td></tr></thead>
+        <tbody>
+          ${active.map((k) => row(solLabel[k] + " — assessments", d.per[k].assessments, { plain: true })).join("")}
+          ${active.map((k) => row(solLabel[k] + " — vehicles", d.per[k].vehicles, { plain: true })).join("")}
+          ${active.map((k) => row("Revenue — " + solLabel[k], d.per[k].revenue)).join("")}
+          ${row("Total direct revenue", d.totals.income, { bold: true, fill: "var(--light)", top: true })}
+          ${row("Consumables &amp; variable costs", d.totals.variable, { negate: true, indent: true })}
+          ${row("Crew salaries", d.totals.salaries, { negate: true, indent: true })}
+          ${row("LOAs", d.totals.loa, { negate: true, indent: true })}
+          ${row("Vehicle &amp; depot rentals", d.totals.rentals, { negate: true, indent: true })}
+          ${row("Fuel", d.totals.fuel, { negate: true, indent: true })}
+          ${row("Other direct costs", d.totals.otherFixed, { negate: true, indent: true })}
+          ${row("Total direct costs", d.totals.directCost, { negate: true, bold: true })}
+          ${row("Contribution", d.totals.contribution, { bold: true, top: true, fill: "var(--light)" })}
+        </tbody>
+      </table>
+      </div>
+
+      <div class="section-label" style="margin-top:20px;">Client register — share of each solution</div>
+      <div style="font-size:10.5px; font-style:italic; color:var(--gray); margin-bottom:8px;">Set what proportion of each solution's volume belongs to a client. SIOC takes all of the Community Health work; a future Employer Solutions client would take a share of POCx.</div>
+      <table style="width:100%; border-collapse:collapse; font-size:11px; max-width:820px;">
+        <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Client</td><td style="padding:5px 8px; text-align:right;">POCx %</td><td style="padding:5px 8px; text-align:right;">Community Health %</td><td style="padding:5px 8px; text-align:right;">Dental %</td><td style="padding:5px 8px; text-align:center;">Remove</td></tr></thead>
+        <tbody>${clients.map((cc) => `<tr data-cl="${cc.id}">
+          <td style="padding:4px 6px;"><input type="text" data-f="name" value="${(cc.name || "").replace(/"/g, "&quot;")}" style="width:160px; font-size:11px;"></td>
+          <td style="padding:4px 6px;"><input type="number" data-a="pocx" value="${cc.allocations.pocx}" style="width:70px; font-size:11px; text-align:right;"></td>
+          <td style="padding:4px 6px;"><input type="number" data-a="sioc" value="${cc.allocations.sioc}" style="width:70px; font-size:11px; text-align:right;"></td>
+          <td style="padding:4px 6px;"><input type="number" data-a="dental" value="${cc.allocations.dental}" style="width:70px; font-size:11px; text-align:right;"></td>
+          <td style="padding:4px 6px; text-align:center;"><button class="cl-del" data-del="${cc.id}" style="border:none;background:none;color:var(--red);font-size:15px;font-weight:700;cursor:pointer;">×</button></td></tr>`).join("")}</tbody>
+      </table>
+      <button class="btn" id="clAdd" style="margin-top:10px;">+ Add client</button>
+      <footer class="source-note">Revenue is the service delivery rate only — ${fmtR(computeGuudMobilesDeliveryRates().siocBreakdown.serviceDelivery)} of the ${fmtR(computeGuudMobilesDeliveryRates().sioc)} billed per Community Health assessment, and ${fmtR(mobilesState.products.dental.monthlyFee)} a month for the Dental unit. The ${fmtR(computeGuudMobilesDeliveryRates().siocBreakdown.regionalSupport + computeGuudMobilesDeliveryRates().siocBreakdown.supportOffice)} per assessment of regional support and Support Office recovery is excluded, as are the overheads it funds. Direct costs are the crew, allowances, running costs and consumables of the vehicles serving this client, apportioned by its share of each solution. Crew cost is the <b>actual payroll</b> of vehicles already rolled out; only vehicles still being introduced, with no one allocated to them yet, carry the modelled crew cost.</footer>
+    </div>`;
+}
+
+function bindClientPnLEvents() {
+  const sel = document.getElementById("clientPnLSelect");
+  if (sel) sel.addEventListener("change", (e) => { clientPnLId = Number(e.target.value); renderDashboard(); });
+  document.querySelectorAll("tr[data-cl]").forEach((tr) => {
+    const cc = sharedState.clients.find((x) => x.id === Number(tr.dataset.cl));
+    tr.querySelectorAll("[data-f]").forEach((i) => i.addEventListener("input", (e) => { cc.name = e.target.value; renderDashboard(); }));
+    tr.querySelectorAll("[data-a]").forEach((i) => i.addEventListener("input", (e) => {
+      cc.allocations[e.target.dataset.a] = Math.max(0, Math.min(100, Number(e.target.value || 0)));
+      renderDashboard();
+    }));
+  });
+  document.querySelectorAll(".cl-del").forEach((b) => b.addEventListener("click", (e) => {
+    sharedState.clients = sharedState.clients.filter((x) => x.id !== Number(e.target.dataset.del));
+    renderDashboard();
+  }));
+  const add = document.getElementById("clAdd");
+  if (add) add.addEventListener("click", () => {
+    sharedState.clients.push({ id: nextId(), name: "New client", allocations: { pocx: 0, sioc: 0, dental: 0 }, note: "" });
+    renderDashboard();
+  });
+}
+
+function renderStockCard() {
+  const m = stockMonthIdx;
+  const S = sharedState.stock;
+  const d = computeStockPosition(m);
+  const accrual = computeStockAccrual();
+  const monthOptions = FY_MONTH_KEYS.map((k, i) => `<option value="${i}" ${i === m ? "selected" : ""}>${k}</option>`).join("");
+  const bLabels = ["0–30 days", "31–60 days", "61–90 days", "90+ days"];
+  const num = (v) => v ? Math.round(v).toLocaleString("en-ZA") : "—";
+
+  const agedCells = (aged, bal) => aged.map((v, i) => `<td style="padding:5px 6px; text-align:right; ${i === 3 && v > 0 ? "color:var(--red); font-weight:700;" : ""}">${fmtK(v)}</td>`).join("") +
+    `<td style="padding:5px 8px; text-align:right; font-weight:700;">${fmtK(bal)}</td>`;
+
+  return `
+    <div class="card">
+      <button class="print-section-btn" onclick="printGuudSection(this)">🖨 Print to PDF</button>
+      <div class="eyebrow">Guud Mobiles</div>
+      <h3>Stock — Ageing, Outages &amp; Orders</h3>
+      <div class="hint" style="margin-bottom:12px;">Consumable stock held on each mobile and at the regional depots, aged by how long it has been sitting, plus work that could not be completed because stock ran out. Stock is aged on consumption: a balance worth two months of usage sits half in the 0–30 day band and half in 31–60. Figures in R'000 unless stated.</div>
+      <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <label style="font-weight:700; font-size:12px;">Month:</label>
+        <select id="stockMonthSelect" style="font-size:13px; padding:4px 8px; font-weight:600;">${monthOptions}</select>
+        <div style="display:flex; flex-direction:column; gap:3px;">
+          <label style="font-size:10px; color:var(--gray); font-weight:700;">Consumables as % of variable cost</label>
+          <input type="number" id="stkShare" value="${S.consumablesShareOfVariable}" style="width:90px; font-size:12px; padding:4px 6px; text-align:right;">
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
+        <div style="flex:1 1 190px; background:var(--light); border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Stock on hand</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700;">${fmtR(d.entityBalance)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">across mobiles and depots</div>
+        </div>
+        <div style="flex:1 1 190px; background:${d.entityAged[3] > 0 ? "#FDECEC" : "var(--light)"}; border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Over 90 days</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700; color:${d.entityAged[3] > 0 ? "var(--red)" : "var(--ink)"};">${fmtR(d.entityAged[3])}</div>
+          <div style="font-size:10.5px; color:var(--gray);">${d.entityBalance ? ((d.entityAged[3] / d.entityBalance) * 100).toFixed(0) + "% of stock" : "—"}</div>
+        </div>
+        <div style="flex:1 1 190px; background:${d.outageValue > 0 ? "#FDECEC" : "var(--light)"}; border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">Outage backlog</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700; color:${d.outageValue > 0 ? "var(--red)" : "var(--ink)"};">${num(d.outageQty)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">units · ${fmtR(d.outageValue)} accrued</div>
+        </div>
+        <div style="flex:1 1 190px; background:var(--light); border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10px; color:var(--gray); font-weight:700; text-transform:uppercase;">On order from Moblix</div>
+          <div style="font-family:var(--font-head); font-size:22px; font-weight:700;">${fmtR(d.onOrder + d.inTransit)}</div>
+          <div style="font-size:10.5px; color:var(--gray);">${fmtR(d.inTransit)} in transit</div>
+        </div>
+      </div>
+
+      <div class="section-label">Stock ageing by mobile — ${FY_MONTH_KEYS[m]}</div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:940px;">
+        <thead><tr style="background:var(--ink); color:#fff;">
+          <td style="padding:5px 8px;">Mobile</td><td style="padding:5px 8px;">Region</td>
+          ${bLabels.map((b) => `<td style="padding:5px 6px; text-align:right;">${b}</td>`).join("")}
+          <td style="padding:5px 8px; text-align:right;">Total</td><td style="padding:5px 8px; text-align:right;">Months cover</td>
+          <td style="padding:5px 8px; text-align:right;">Outage share</td>
+        </tr></thead>
+        <tbody>
+          ${d.rows.filter((r) => r.live).map((r) => `<tr>
+            <td style="padding:5px 8px; white-space:nowrap;">${r.name}</td>
+            <td style="padding:5px 8px; color:var(--gray);">${r.regionName}</td>
+            ${agedCells(r.aged, r.balance)}
+            <td style="padding:5px 8px; text-align:right; ${r.monthsCover > 3 ? "color:var(--red); font-weight:700;" : ""}">${r.monthsCover ? r.monthsCover.toFixed(1) : "—"}</td>
+            <td style="padding:5px 8px; text-align:right;">${fmtK(r.outageShare || 0)}</td>
+          </tr>`).join("")}
+          ${d.regions.map((rg) => `<tr style="background:var(--light); font-weight:700;">
+            <td style="padding:5px 8px;">${rg.name} — incl. depot ${fmtK(rg.depot)}</td>
+            <td style="padding:5px 8px;"></td>
+            ${agedCells(rg.aged, rg.balance)}
+            <td style="padding:5px 8px;"></td><td style="padding:5px 8px;"></td>
+          </tr>`).join("")}
+          <tr style="border-top:2px solid var(--ink); font-weight:700; background:#F5EBEC;">
+            <td style="padding:5px 8px;">Guud Mobiles — total</td><td></td>
+            ${agedCells(d.entityAged, d.entityBalance)}
+            <td></td><td></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <div class="section-label" style="margin-top:20px;">Regional depot stock (R)</div>
+      <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:6px;">
+        ${Object.entries(mobilesState.regions).map(([k, rg]) => `<div style="display:flex; flex-direction:column; gap:3px;">
+          <label style="font-size:10px; color:var(--gray); font-weight:700;">${rg.name}</label>
+          <input type="number" class="stk-depot" data-k="${k}" value="${(S.depotStock || {})[k] || 0}" style="width:120px; font-size:12px; padding:4px 6px; text-align:right;">
+        </div>`).join("")}
+      </div>
+
+      <div class="section-label" style="margin-top:20px;">Stock outages — work done, stock unavailable</div>
+      <div class="hint" style="margin-bottom:8px;">Assessments completed where the item could not be supplied on site — principally lenses still to be cut. The revenue is earned, so the cost is accrued until the work is finished. Enter the units outstanding at each month end by type.</div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:1020px;">
+        <thead><tr style="background:var(--ink); color:#fff;">
+          <td style="padding:5px 8px;">Type</td><td style="padding:5px 6px; text-align:right;">Unit cost</td>
+          ${FY_MONTH_KEYS.map((k) => `<td style="padding:5px 4px; text-align:right;">${k.split(" ")[0]}</td>`).join("")}
+          <td style="padding:5px 8px; text-align:right;">This month value</td></tr></thead>
+        <tbody>
+          ${(S.glassTypes || []).map((g) => `<tr data-gt="${g.id}">
+            <td style="padding:4px 6px;"><input type="text" data-f="label" value="${(g.label || "").replace(/"/g, "&quot;")}" style="width:120px; font-size:11px;"></td>
+            <td style="padding:4px 6px;"><input type="number" data-f="unitCost" value="${g.unitCost || 0}" style="width:80px; font-size:11px; text-align:right;"></td>
+            ${(g.backlog || []).map((v, i) => `<td style="padding:3px 3px;"><input type="number" class="stk-bl" data-gt="${g.id}" data-i="${i}" value="${v}" style="width:100%; min-width:46px; font-size:10px; text-align:right; padding:3px 3px;"></td>`).join("")}
+            <td style="padding:4px 8px; text-align:right; font-weight:700;">${fmtR(Number((g.backlog || [])[m] || 0) * Number(g.unitCost || 0))}</td>
+          </tr>`).join("")}
+          <tr style="background:var(--light); font-weight:700;">
+            <td colspan="2" style="padding:5px 8px;">Total units outstanding</td>
+            ${FY_MONTH_KEYS.map((k, i) => `<td style="padding:5px 4px; text-align:right;">${num((S.glassTypes || []).reduce((s, g) => s + Number((g.backlog || [])[i] || 0), 0))}</td>`).join("")}
+            <td style="padding:5px 8px; text-align:right;">${fmtR(d.outageValue)}</td>
+          </tr>
+          <tr style="font-weight:700;">
+            <td colspan="2" style="padding:5px 8px;">Accrued expense on balance sheet</td>
+            ${accrual.map((v) => `<td style="padding:5px 4px; text-align:right; ${v > 0 ? "color:var(--red);" : ""}">${fmtK(v)}</td>`).join("")}
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <div style="margin-top:8px;"><label style="display:flex; align-items:center; gap:8px; font-size:11.5px; font-weight:700;">
+        <input type="checkbox" id="stkAddsCost" ${S.accrualAddsCost ? "checked" : ""}> Treat the accrual as an additional cost
+      </label>
+      <div style="font-size:10.5px; color:var(--gray); font-style:italic; margin-top:3px;">${S.accrualAddsCost
+        ? "The accrual is being charged to the P&amp;L as well as raised on the balance sheet. Use this only if the outage cost is NOT already inside the variable cost per assessment."
+        : "The cost already sits in variable costs per assessment, so the accrual is a timing entry on the balance sheet only and does not touch profit."}</div></div>
+
+      <div class="section-label" style="margin-top:20px;">Moblix order book</div>
+      <div class="hint" style="margin-bottom:8px;">Consumable stock ordered from Moblix but not yet received. In transit is stock that has shipped and is on the water.</div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:1000px;">
+        <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">R</td>${FY_MONTH_KEYS.map((k) => `<td style="padding:5px 4px; text-align:right;">${k.split(" ")[0]}</td>`).join("")}</tr></thead>
+        <tbody>
+          <tr><td style="padding:5px 8px; font-weight:600;">On order</td>${(S.moblixOnOrder || []).map((v, i) => `<td style="padding:3px 3px;"><input type="number" class="stk-order" data-i="${i}" value="${v}" style="width:100%; min-width:58px; font-size:10px; text-align:right; padding:3px 4px;"></td>`).join("")}</tr>
+          <tr><td style="padding:5px 8px; font-weight:600;">In transit</td>${(S.moblixInTransit || []).map((v, i) => `<td style="padding:3px 3px;"><input type="number" class="stk-transit" data-i="${i}" value="${v}" style="width:100%; min-width:58px; font-size:10px; text-align:right; padding:3px 4px;"></td>`).join("")}</tr>
+        </tbody>
+      </table>
+      </div>
+      <footer class="source-note">Stock balances come from each mobile's own working-capital model; ageing is derived from consumption rather than entered. The outage accrual appears on the Group Balance Sheet as "Accrued Expenses — Stock Outages".</footer>
+    </div>`;
+}
+
+function bindStockEvents() {
+  const re = () => { renderDashboard(); };
+  const sel = document.getElementById("stockMonthSelect");
+  if (sel) sel.addEventListener("change", (e) => { stockMonthIdx = Number(e.target.value); re(); });
+  const sh = document.getElementById("stkShare");
+  if (sh) sh.addEventListener("input", (e) => { sharedState.stock.consumablesShareOfVariable = Number(e.target.value || 0); re(); });
+  const ac = document.getElementById("stkAddsCost");
+  if (ac) ac.addEventListener("change", (e) => { sharedState.stock.accrualAddsCost = e.target.checked; re(); renderSummary(); });
+  document.querySelectorAll(".stk-depot").forEach((i) => i.addEventListener("input", (e) => { sharedState.stock.depotStock[e.target.dataset.k] = Number(e.target.value || 0); re(); }));
+  document.querySelectorAll(".stk-bl").forEach((i) => i.addEventListener("input", (e) => {
+    const g = sharedState.stock.glassTypes.find((x) => x.id === Number(e.target.dataset.gt));
+    if (g) g.backlog[Number(e.target.dataset.i)] = Number(e.target.value || 0);
+    re(); renderSummary();
+  }));
+  document.querySelectorAll("tr[data-gt] [data-f]").forEach((i) => i.addEventListener("input", (e) => {
+    const g = sharedState.stock.glassTypes.find((x) => x.id === Number(e.target.closest("tr").dataset.gt));
+    if (!g) return;
+    const f = e.target.dataset.f;
+    g[f] = f === "unitCost" ? Number(e.target.value || 0) : e.target.value;
+    re(); renderSummary();
+  }));
+  document.querySelectorAll(".stk-order").forEach((i) => i.addEventListener("input", (e) => { sharedState.stock.moblixOnOrder[Number(e.target.dataset.i)] = Number(e.target.value || 0); re(); }));
+  document.querySelectorAll(".stk-transit").forEach((i) => i.addEventListener("input", (e) => { sharedState.stock.moblixInTransit[Number(e.target.dataset.i)] = Number(e.target.value || 0); re(); }));
+}
+
+function renderFleetMonthlyPnLCard() {
+  const m = fleetPnlMonthIdx;
+  const d = computeFleetMonthlyPnL(m);
+  const live = d.cols.filter((c) => c.live);
+  const cols = live.concat(d.regionRows, [d.soRow]);
+  const monthOptions = FY_MONTH_KEYS.map((k, i) => `<option value="${i}" ${i === m ? "selected" : ""}>${k}</option>`).join("");
+  const cell = (v, o) => `<td style="padding:5px 6px; text-align:right; white-space:nowrap; ${v < 0 ? "color:var(--red);" : ""}${o && o.bold ? "font-weight:700;" : ""}">${v === 0 ? "—" : fmtK(v)}</td>`;
+  const row = (label, f, o) => {
+    o = o || {};
+    const sign = o.negate ? -1 : 1;
+    return `<tr style="${o.bold ? "font-weight:700;" : ""}${o.fill ? "background:" + o.fill + ";" : ""}${o.top ? "border-top:2px solid var(--ink);" : ""}">
+      <td style="padding:5px 8px; white-space:nowrap;${o.indent ? "padding-left:18px;" : ""}">${label}</td>
+      ${cols.map((c) => cell(sign * (o.calc ? o.calc(c) : c[f]))).join("")}
+      ${cell(sign * (o.calc ? o.calc(d.totals) : d.totals[f]), { bold: true })}</tr>`;
+  };
+  const tieOk = Math.abs(d.tie) < 1;
+
+  return `
+    <div class="card">
+      <button class="print-section-btn" onclick="printGuudSection(this)">🖨 Print to PDF</button>
+      <div class="eyebrow">Guud Mobiles</div>
+      <h3>Fleet P&amp;L — ${FY_MONTH_KEYS[m]}</h3>
+      <div class="hint" style="margin-bottom:12px;">Every mobile live in the month as its own column, then each region's overhead and Support Office, footing to Guud Mobiles' result for that month. Figures in R'000. Mobiles not yet in service are hidden — ${d.cols.length - live.length ? (d.cols.length - live.length) + " not yet live this month." : "the whole fleet is live."}</div>
+      <div style="margin-bottom:14px; display:flex; align-items:center; gap:10px;">
+        <label style="font-weight:700; font-size:12px;">Month:</label>
+        <select id="fleetPnlMonthSelect" style="font-size:13px; padding:4px 8px; font-weight:600;">${monthOptions}</select>
+      </div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:1100px;">
+        <thead>
+          <tr style="background:var(--ink); color:#fff;">
+            <td style="padding:5px 8px;">R'000</td>
+            ${cols.map((c) => `<td style="padding:5px 6px; text-align:right; white-space:nowrap;">${c.name}</td>`).join("")}
+            <td style="padding:5px 8px; text-align:right;">Total</td>
+          </tr>
+          <tr style="background:#333; color:#ccc; font-size:9px;">
+            <td style="padding:3px 8px;">Region</td>
+            ${cols.map((c) => `<td style="padding:3px 6px; text-align:right;">${c.region || ""}</td>`).join("")}
+            <td></td>
+          </tr>
+          <tr style="background:#4a4a4a; color:#e6e6e6; font-size:9px;">
+            <td style="padding:3px 8px;">Solution</td>
+            ${cols.map((c) => `<td style="padding:3px 6px; text-align:right;">${c.solLabel || ""}</td>`).join("")}
+            <td></td>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="background:#FAFAFA;">
+            <td style="padding:5px 8px; white-space:nowrap; color:var(--gray);">Assessments in the month</td>
+            ${cols.map((c) => `<td style="padding:5px 6px; text-align:right; color:var(--gray);">${c.basis === "assessments" && c.assessments ? Math.round(c.assessments).toLocaleString("en-ZA") : c.basis === "monthly" ? "monthly fee" : "—"}</td>`).join("")}
+            <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--gray);">${Math.round(d.totals.assessments).toLocaleString("en-ZA")}</td>
+          </tr>
+          <tr style="background:#FAFAFA;">
+            <td style="padding:5px 8px; white-space:nowrap; color:var(--gray);">Charge per assessment / month</td>
+            ${cols.map((c) => `<td style="padding:5px 6px; text-align:right; color:var(--gray);">${c.rate ? fmtR(c.rate) : "—"}</td>`).join("")}
+            <td style="padding:5px 8px; text-align:right; color:var(--gray);">—</td>
+          </tr>
+          ${row("Revenue — service delivery", "revenue")}
+          ${row("Other income — regional &amp; support recovery", "otherIncome")}
+          ${row("Total income", null, { bold: true, fill: "var(--light)", calc: (c) => c.revenue + c.otherIncome })}
+          ${row("Variable costs", "variableCost", { negate: true })}
+          ${row("Gross profit", null, { bold: true, top: true, calc: (c) => c.revenue + c.otherIncome - c.variableCost })}
+          ${row("Salaries", "salaries", { negate: true, indent: true })}
+          ${row("LOAs", "loa", { negate: true, indent: true })}
+          ${row("Rentals", "rentals", { negate: true, indent: true })}
+          ${row("Fuel", "fuel", { negate: true, indent: true })}
+          ${row("Other fixed costs", "otherFixed", { negate: true, indent: true })}
+          ${row("Total fixed costs", "fixedCost", { negate: true, bold: true })}
+          ${row("Net profit / (loss)", "netProfit", { bold: true, top: true, fill: "var(--light)" })}
+        </tbody>
+      </table>
+      </div>
+      <div style="margin-top:10px; font-weight:700; color:${tieOk ? "var(--mint)" : "var(--red)"};">
+        ${tieOk ? "✓ Foots to Guud Mobiles' " + FY_MONTH_KEYS[m] + " result (" + fmtR(d.entityNP) + ")" : "⚠ Differs from the entity result by " + fmtR(d.tie)}
+      </div>
+      <footer class="source-note">Built from the same per-mobile figures that drive the Group balance sheet, so the columns cannot drift from the entity P&amp;L. Rentals paid to SVL and Tito show in full — real cash out of Guud Mobiles, even though they eliminate at Xtend Consolidated level.</footer>
+    </div>`;
 }
 
 function renderMobilesUnitBreakdownCard() {
@@ -4303,7 +5431,13 @@ function renderGroupConsolidatedCard() {
 
   const nonCurrentLiabTotal = gc.months.map((m, i) => m.extendLoan + bsa.commercialDebtMobiles + bsa.commercialDebtProperty);
   const tradePayablesTotal = flat(bsa.tradePayables.pocx + bsa.tradePayables.sioc + bsa.tradePayables.dental);
-  const incomeAdvanceTotal = flat(bsa.incomeReceivedInAdvance.pocx + bsa.incomeReceivedInAdvance.sioc + bsa.incomeReceivedInAdvance.dental);
+  // Income received in advance is now computed from the billing lead, with
+  // any manually-entered opening balance added on top.
+  const deferredCalc = computeDeferredIncome();
+  const incomeAdvancePocx = deferredCalc.value.pocx.map((v) => v + bsa.incomeReceivedInAdvance.pocx);
+  const incomeAdvanceSioc = deferredCalc.value.sioc.map((v) => v + bsa.incomeReceivedInAdvance.sioc);
+  const incomeAdvanceDental = deferredCalc.value.dental.map((v) => v + bsa.incomeReceivedInAdvance.dental);
+  const incomeAdvanceTotal = incomeAdvancePocx.map((v, i) => v + incomeAdvanceSioc[i] + incomeAdvanceDental[i]);
   const currentLiabTotal = tradePayablesTotal.map((v, i) => v + incomeAdvanceTotal[i] + bsa.vatPayable);
   const totalLiabilities = nonCurrentLiabTotal.map((v, i) => v + currentLiabTotal[i]);
 
@@ -4333,7 +5467,11 @@ function renderGroupConsolidatedCard() {
     ])}
     ${bsCfMetricBlock("Total Current Liabilities", currentLiabTotal, [
       { label: "Trade Payables", values: tradePayablesTotal },
+      { label: "Accrued Expenses — Stock Outages", values: gc.months.map((x) => x.stockAccrual || 0) },
       { label: "Income Received In Advance", values: incomeAdvanceTotal },
+      { label: "&nbsp;&nbsp;— Employer Solutions (POCx)", values: incomeAdvancePocx },
+      { label: "&nbsp;&nbsp;— Community Health General (SIOC)", values: incomeAdvanceSioc },
+      { label: "&nbsp;&nbsp;— Community Health Dental (SIOC)", values: incomeAdvanceDental },
       { label: "VAT Payable", values: flat(bsa.vatPayable) },
     ], { fill: "var(--light)" })}
     ${bsCfRowHTML("TOTAL LIABILITIES", totalLiabilities, { bold: true, fill: "#F5EBEC" })}
@@ -4412,6 +5550,27 @@ function renderGroupConsolidatedCard() {
       <tbody>${bsHTML}</tbody>
     </table>
     </div>
+    ${(() => {
+      const dd = computeDeferredIncome();
+      const cells = (arr) => arr.map((v) => `<td style="padding:4px 5px; text-align:right;">${v ? Math.round(v).toLocaleString("en-ZA") : "\u2014"}</td>`).join("") +
+        `<td style="padding:4px 8px; text-align:right; font-weight:700;">${arr[11] ? Math.round(arr[11]).toLocaleString("en-ZA") : "\u2014"}</td>`;
+      return `
+    <div style="margin-top:14px; padding:12px 14px; background:var(--light); border-left:4px solid var(--teal); border-radius:6px;">
+      <div style="font-weight:700; font-size:11.5px; margin-bottom:6px; color:var(--maroon);">Note — assessments still to be delivered against Income Received In Advance</div>
+      <div style="font-size:10.5px; color:var(--gray); font-style:italic; margin-bottom:8px;">Support Office has billed Guud SA for these assessments against a client purchase order, but they have not yet been carried out. The liability winds down as the mobile, region and Support Office invoice against it.</div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:10px; min-width:880px;">
+        <thead><tr style="background:#4a4a4a; color:#e6e6e6;"><td style="padding:4px 8px;">Outstanding assessments</td>${FY_MONTH_KEYS.map((k) => `<td style="padding:4px 5px; text-align:right;">${k.split(" ")[0]}</td>`).join("")}<td style="padding:4px 8px; text-align:right;">Year-end</td></tr></thead>
+        <tbody>
+          <tr><td style="padding:4px 8px;">Employer Solutions (POCx)</td>${cells(dd.assessments.pocx)}</tr>
+          <tr><td style="padding:4px 8px;">Community Health General (SIOC)</td>${cells(dd.assessments.sioc)}</tr>
+          <tr><td style="padding:4px 8px;">Community Health Dental (SIOC) — units</td>${cells(dd.assessments.dental)}</tr>
+          <tr style="font-weight:700; background:#fff;"><td style="padding:4px 8px;">Total outstanding</td>${cells(dd.assessmentsTotal)}</tr>
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+    })()}
 
     <div style="font-weight:700; margin:18px 0 6px;">Cash Flow Statement</div>
     <div style="overflow-x:auto;">
@@ -5229,7 +6388,9 @@ function renderReconciliationCheckCard() {
   const incomeAdvanceTotal = bsa.incomeReceivedInAdvance.pocx + bsa.incomeReceivedInAdvance.sioc + bsa.incomeReceivedInAdvance.dental;
   const balanceSheetSelfCheck = gc.months.map((m) => {
     const assets = nonCurrentAssets + m.cash + tradeReceivablesTotal + prepaymentsTotal + m.stock;
-    const liabilities = m.extendLoan + bsa.commercialDebtMobiles + bsa.commercialDebtProperty + tradePayablesTotal + incomeAdvanceTotal + bsa.vatPayable;
+    // m.cash already carries the advance receipts, so the matching liability
+    // must include the computed deferred income as well as any opening balance.
+    const liabilities = m.extendLoan + bsa.commercialDebtMobiles + bsa.commercialDebtProperty + tradePayablesTotal + incomeAdvanceTotal + (m.deferredIncome || 0) + (m.stockAccrual || 0) + bsa.vatPayable;
     const equity = m.retainedEarnings + bsa.shareCapital + bsa.retainedEarningsPriorYear;
     return assets - liabilities - equity;
   });
@@ -5309,6 +6470,16 @@ function renderDashboard() {
     host.innerHTML = renderConsolidatedCard();
   } else if (outputTab === "supportoffice") {
     host.innerHTML = renderSupportOfficeCard();
+  } else if (outputTab === "clientpnl") {
+    host.innerHTML = renderClientPnLCard();
+    bindClientPnLEvents();
+  } else if (outputTab === "stock") {
+    host.innerHTML = renderStockCard();
+    bindStockEvents();
+  } else if (outputTab === "fleetpnl") {
+    host.innerHTML = renderFleetMonthlyPnLCard();
+    const sel = document.getElementById("fleetPnlMonthSelect");
+    if (sel) sel.addEventListener("change", (e) => { fleetPnlMonthIdx = Number(e.target.value); renderDashboard(); });
   } else if (outputTab === "unitbreakdown") {
     host.innerHTML = renderMobilesUnitBreakdownCard();
   } else if (outputTab === "entity") {
@@ -5414,6 +6585,59 @@ function renderInputsPanel() {
     });
     html += `</div>`;
     html += `<button class="add-line-btn" id="addVcLine">+ Add cost line</button>`;
+  }
+
+  // LOA allowances for this solution. Kept here rather than in General
+  // Assumptions so the driver sits next to the rest of the solution's
+  // commercials and its effect on this P&L is obvious.
+  {
+    const L = sharedState.loa;
+    const k = activeTab === "dental" ? "dental" : activeTab;
+    const basis = (L.basis || {})[k] || "derived";
+    const derived = basis === "derived";
+    const ent = computeEntityConsolidatedPnL();
+    const act = { pocx: ent.totalActivePocx, sioc: ent.totalActiveSioc, dental: ent.totalActiveDental }[k] || [];
+    const vol = { pocx: sharedState.volumePlan.pocx, sioc: sharedState.volumePlan.sioc, dental: ent.totalActiveDental }[k] || [];
+    const perVeh = (m) => (act[m] ? vol[m] / act[m] : 0);
+    const opDays = range12().map((m) => loaOperationalDays(k, perVeh(m)));
+    const loaDays = range12().map((m) => loaDaysFor(k, perVeh(m), m));
+    const costFY = range12().reduce((s, m) => s + (act[m] || 0) * loaForVehicleMonth(k, perVeh(m), m), 0);
+
+    html += `<div class="section-label">LOA Allowances <span style="font-weight:400; text-transform:none; letter-spacing:0; color:var(--gray); font-size:10px;">(${product.label})</span></div>`;
+    html += `<div class="hint">Paid per staff member per night away. Choose whether allowance days follow the work done, or are set directly because the crew is not away every operational day.</div>`;
+    html += `<div class="field-row"><label>LOA days basis</label><select id="solLoaBasis">
+      <option value="derived" ${derived ? "selected" : ""}>Derived from assessments</option>
+      <option value="fixedDays" ${!derived ? "selected" : ""}>Set LOA days directly</option></select></div>`;
+    if (k !== "dental") {
+      html += `<div class="field-row"><label>Assessments per operational day</label><input type="number" id="solLoaApd" value="${(L.assessmentsPerDay || {})[k] || 0}" ${derived ? "" : "disabled"}></div>`;
+      html += `<div class="field-row"><label>Maximum assessments per day</label><input type="number" id="solLoaMax" value="${(L.maxAssessmentsPerDay || {})[k] || 0}"></div>`;
+    }
+    if (derived) {
+      html += `<div class="field-row"><label>LOA days per month</label><input type="number" value="0" disabled></div>
+        <div class="hint" style="margin:-6px 0 10px;">Derived from assessments — switch the basis above to enter days directly.</div>`;
+    } else {
+      const arr = (L.loaDaysPerMonth || {})[k] || [];
+      html += `<div class="section-label" style="margin-top:6px;">LOA days per month</div>`;
+      html += `<div class="hint" style="margin-bottom:6px;">Enter the days a crew is away in each month. December and other short months usually differ.</div>`;
+      html += `<div style="overflow-x:auto; margin-bottom:8px;"><table style="width:100%; border-collapse:collapse; font-size:10px;">
+        <thead><tr style="background:var(--ink); color:#fff;">${FY_MONTH_KEYS.map((x) => `<td style="padding:4px 2px; text-align:center;">${x.split(" ")[0].slice(0, 3)}</td>`).join("")}</tr></thead>
+        <tbody><tr>${arr.map((v, i) => `<td style="padding:3px 2px;"><input type="number" class="sol-loa-day" data-i="${i}" value="${v}" style="width:100%; min-width:34px; font-size:10px; text-align:center; padding:3px 2px;"></td>`).join("")}</tr></tbody>
+      </table></div>`;
+      html += `<div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:10px;">
+        <div style="display:flex; flex-direction:column; gap:3px;"><label style="font-size:10px; color:var(--gray); font-weight:700;">Set every month to</label>
+        <input type="number" id="solLoaDaysAll" placeholder="${arr[0] || 0}" style="width:80px; font-size:12px; padding:4px 6px; text-align:right;"></div>
+        <button class="btn" id="solLoaDaysApply" style="font-size:11px; padding:5px 10px;">Apply to all</button></div>`;
+    }
+    html += `<div class="field-row"><label>Staff earning LOA per vehicle</label><input type="number" id="solLoaStaff" value="${(L.staffPerVehicle || {})[k] || 0}"></div>`;
+    html += `<div class="field-row"><label>Rate per person per night (R)</label><input type="number" id="solLoaRate" value="${L.ratePerDay}"></div>`;
+    html += `<div class="hint" style="margin:-6px 0 10px;">The rate is shared across every solution — changing it here changes it everywhere.</div>`;
+    html += `<div style="overflow-x:auto; margin-bottom:12px;"><table style="width:100%; border-collapse:collapse; font-size:10px;">
+      <thead><tr style="background:#4a4a4a; color:#e6e6e6;"><td style="padding:4px 6px;">Per vehicle</td>${FY_MONTH_KEYS.map((x) => `<td style="padding:4px 3px; text-align:right;">${x.split(" ")[0].slice(0, 1)}</td>`).join("")}</tr></thead>
+      <tbody>
+        <tr><td style="padding:4px 6px;">Operational days</td>${opDays.map((x) => `<td style="padding:4px 3px; text-align:right; ${x > 22 ? "color:var(--red); font-weight:700;" : ""}">${x || "—"}</td>`).join("")}</tr>
+        <tr style="background:var(--light); font-weight:700;"><td style="padding:4px 6px;">LOA days paid</td>${loaDays.map((x) => `<td style="padding:4px 3px; text-align:right;">${x || "—"}</td>`).join("")}</tr>
+      </tbody></table>
+      <div style="font-size:10.5px; color:var(--gray); font-style:italic; margin-top:4px;">Cost to this solution for the year: <b>${fmtR(costFY)}</b>. Operational days above 22 are flagged — the volume cannot be delivered by the vehicles assigned.</div></div>`;
   }
 
   html += `<div class="section-label">Fixed Costs per GMAC / Month <span style="font-weight:400; text-transform:none; letter-spacing:0; color:var(--gray); font-size:10px;">(shared unless overridden)</span></div>`;
@@ -5732,6 +6956,31 @@ function bindInputPanelEvents(product) {
       product.variableCostLines.push({ id: nextId(), cat: "ecosystem", label: "New Cost Line", value: 0 });
       renderInputsPanel(); renderDashboard();
     });
+  }
+
+  // LOA assumptions for this solution
+  {
+    const k = activeTab === "dental" ? "dental" : activeTab;
+    const reLoa = () => { renderInputsPanel(); renderDashboard(); renderSummary(); };
+    const bind = (id, apply, evt) => { const el = document.getElementById(id); if (el) el.addEventListener(evt || "input", (e) => { apply(evt === "change" ? e.target.value : Number(e.target.value || 0)); reLoa(); }); };
+    bind("solLoaBasis", (v) => { sharedState.loa.basis[k] = v; if (k === "dental") sharedState.loa.dentalDaysPerMonth = sharedState.loa.loaDaysPerMonth.dental; }, "change");
+    bind("solLoaApd", (v) => { sharedState.loa.assessmentsPerDay[k] = v; });
+    bind("solLoaMax", (v) => { sharedState.loa.maxAssessmentsPerDay[k] = v; });
+    document.querySelectorAll(".sol-loa-day").forEach((el) => el.addEventListener("input", (e) => {
+      const arr = sharedState.loa.loaDaysPerMonth[k];
+      arr[Number(e.target.dataset.i)] = Number(e.target.value || 0);
+      if (k === "dental") sharedState.loa.dentalDaysPerMonth = arr[0];
+      renderDashboard(); renderSummary();
+    }));
+    const applyAll = document.getElementById("solLoaDaysApply");
+    if (applyAll) applyAll.addEventListener("click", () => {
+      const v = Number((document.getElementById("solLoaDaysAll") || {}).value || 0);
+      sharedState.loa.loaDaysPerMonth[k] = new Array(12).fill(v);
+      if (k === "dental") sharedState.loa.dentalDaysPerMonth = v;
+      reLoa();
+    });
+    bind("solLoaStaff", (v) => { sharedState.loa.staffPerVehicle[k] = v; });
+    bind("solLoaRate", (v) => { sharedState.loa.ratePerDay = v; });
   }
 
   // Fixed cost overrides (value + optional display-label override)
@@ -6748,13 +7997,13 @@ function renderSAOutputBalanceSheet(host) {
   function sectionHeader(label) {
     return `<tr style="background:var(--ink);"><td colspan="14" style="padding:5px 8px; color:#fff; font-weight:700; font-size:10px; letter-spacing:0.4px;">${label}</td></tr>`;
   }
-  const currentAssetsTotal = bs.cash.map((v, i) => v + bs.debtors[i]);
+  const currentAssetsTotal = bs.cash.map((v, i) => v + bs.debtors[i] + (bs.prepayments ? bs.prepayments[i] : 0));
   const currentLiabTotal = bs.creditors.map((v, i) => v + bs.taxPayable[i]);
   host.innerHTML = `
     <div class="card">
       <div class="eyebrow">Unit Economics</div>
       <h3>Guud South Africa — Balance Sheet (FY2026/27)</h3>
-      <div style="font-size:10.5px; font-style:italic; color:var(--gray); margin:-6px 0 10px;">Month-end balances, in R'000. Bold subtotal lines can be clicked to expand/collapse their breakdown.</div>
+      <div style="font-size:10.5px; font-style:italic; color:var(--gray); margin:-6px 0 10px;">Month-end balances, in R'000. Bold subtotal lines can be clicked to expand/collapse their breakdown. <b>Prepayments</b> are assessments billed by Guud Mobiles' Support Office in advance against a client purchase order but not yet delivered — the mirror of Guud Mobiles' income received in advance.</div>
       <div style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:900px;">
         <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">R'000</td>${saMonthHeaderCells()}<td style="padding:5px 8px; text-align:right; background:var(--teal);">FY / End</td></tr></thead>
@@ -6764,6 +8013,10 @@ function renderSAOutputBalanceSheet(host) {
           ${saMetricBlock("Total Current Assets", currentAssetsTotal, last(currentAssetsTotal), [
             { label: "Cash", values: bs.cash, fy: last(bs.cash) },
             { label: "Trade Debtors", values: bs.debtors, fy: last(bs.debtors) },
+            { label: "Prepayments — assessments paid in advance", values: bs.prepayments || [], fy: last(bs.prepayments || [0]) },
+            { label: "&nbsp;&nbsp;— Employer Solutions (POCx)", values: bs.prepayPocx || [], fy: last(bs.prepayPocx || [0]) },
+            { label: "&nbsp;&nbsp;— Community Health General (SIOC)", values: bs.prepaySioc || [], fy: last(bs.prepaySioc || [0]) },
+            { label: "&nbsp;&nbsp;— Community Health Dental (SIOC)", values: bs.prepayDental || [], fy: last(bs.prepayDental || [0]) },
           ], { fill: "var(--light)" })}
           ${saMonthRow("TOTAL ASSETS", bs.totalAssets, last(bs.totalAssets), { bold: true, fyFill: "var(--mint-bg)" })}
           ${sectionHeader("LIABILITIES")}
@@ -6777,10 +8030,30 @@ function renderSAOutputBalanceSheet(host) {
             { label: "Share Capital", values: bs.shareCapital, fy: last(bs.shareCapital) },
             { label: "Retained Earnings", values: bs.retainedEarnings, fy: last(bs.retainedEarnings) },
           ], { bold: true, fill: "var(--ink)", color: "#fff", labelColor: "#fff" })}
-          ${saMonthRow("Balance Check (Assets − Liabilities &amp; Equity)", bs.balanceCheck, last(bs.balanceCheck), { color: "var(--gray)" }, (v) => Math.round(v).toLocaleString("en-ZA"))}
+          ${saMonthRow("Balance Check (Assets \u2212 Liabilities &amp; Equity)", bs.balanceCheck, last(bs.balanceCheck), { color: "var(--gray)" }, (v) => Math.round(v).toLocaleString("en-ZA"))}
         </tbody>
       </table>
       </div>
+      ${bs.prepaidAssessments ? (() => {
+        const cells = (arr) => arr.map((v) => `<td style="padding:4px 5px; text-align:right;">${v ? Math.round(v).toLocaleString("en-ZA") : "\u2014"}</td>`).join("") +
+          `<td style="padding:4px 8px; text-align:right; font-weight:700;">${arr[11] ? Math.round(arr[11]).toLocaleString("en-ZA") : "\u2014"}</td>`;
+        return `
+      <div style="margin-top:14px; padding:12px 14px; background:var(--light); border-left:4px solid var(--teal); border-radius:6px;">
+        <div style="font-weight:700; font-size:11.5px; margin-bottom:6px; color:var(--maroon);">Note — assessments still to be received against Prepayments</div>
+        <div style="font-size:10.5px; color:var(--gray); font-style:italic; margin-bottom:8px;">Guud SA has paid Guud Mobiles in advance for these assessments against a client purchase order, but they have not yet been carried out. The mirror of Guud Mobiles' Income Received In Advance.</div>
+        <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:10px; min-width:880px;">
+          <thead><tr style="background:#4a4a4a; color:#e6e6e6;"><td style="padding:4px 8px;">Outstanding assessments</td>${FY_MONTH_KEYS.map((k) => `<td style="padding:4px 5px; text-align:right;">${k.split(" ")[0]}</td>`).join("")}<td style="padding:4px 8px; text-align:right;">Year-end</td></tr></thead>
+          <tbody>
+            <tr><td style="padding:4px 8px;">Employer Solutions (POCx)</td>${cells(bs.prepaidPocx)}</tr>
+            <tr><td style="padding:4px 8px;">Community Health General (SIOC)</td>${cells(bs.prepaidSioc)}</tr>
+            <tr><td style="padding:4px 8px;">Community Health Dental (SIOC) — units</td>${cells(bs.prepaidDental)}</tr>
+            <tr style="font-weight:700; background:#fff;"><td style="padding:4px 8px;">Total outstanding</td>${cells(bs.prepaidAssessments)}</tr>
+          </tbody>
+        </table>
+        </div>
+      </div>`;
+      })() : ""}
     </div>`;
 }
 
@@ -6800,6 +8073,22 @@ function renderGeneralAssumptions() {
   html += `<div class="field-row"><label>Regional Mobile Cap (assessments / month)</label>
     <input type="number" id="genRegionalCap" step="10" value="${mobilesState.regionalCap}"></div>
     <div class="hint" style="margin:-8px 0 12px;">Ceiling reference shown alongside the HO Sales Target on the Regional Economics Snapshot.</div>`;
+
+  html += `<div class="section-label">Income received in advance — billing lead</div>`;
+  html += `<div class="hint" style="margin-bottom:8px;">Support Office bills Guud SA in advance against a client purchase order, then the mobile, region and Support Office invoice against it as assessments are delivered, winding the balance down. Set how many months of assessments are billed ahead. This affects the balance sheets and cash timing only — revenue is still recognised as the work is done.</div>`;
+  html += `<div class="field-row"><label>Bill in advance</label><input type="checkbox" id="diEnabled" ${s.deferredIncome.enabled ? "checked" : ""} style="width:auto;"></div>`;
+  html += `<div class="field-row"><label>Employer Solutions (POCx) — months billed ahead</label><input type="number" id="diPocx" value="${s.deferredIncome.leadMonths.pocx}"></div>`;
+  html += `<div class="field-row"><label>Community Health General (SIOC) — months ahead</label><input type="number" id="diSioc" value="${s.deferredIncome.leadMonths.sioc}"></div>`;
+  html += `<div class="field-row"><label>Community Health Dental (SIOC) — months ahead</label><input type="number" id="diDental" value="${s.deferredIncome.leadMonths.dental}"></div>`;
+  html += (() => {
+    const d = computeDeferredIncome();
+    return `<div style="overflow-x:auto; margin-bottom:14px;"><table style="width:100%; border-collapse:collapse; font-size:10.5px; min-width:900px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;"></td>${FY_MONTH_KEYS.map((k) => `<td style="padding:5px 4px; text-align:right;">${k.split(" ")[0]}</td>`).join("")}</tr></thead>
+      <tbody>
+        <tr><td style="padding:5px 8px;">Prepaid assessments at month end</td>${d.assessmentsTotal.map((v) => `<td style="padding:5px 4px; text-align:right;">${v ? Math.round(v).toLocaleString("en-ZA") : "—"}</td>`).join("")}</tr>
+        <tr style="font-weight:700; background:var(--light);"><td style="padding:5px 8px;">Income received in advance</td>${d.valueTotal.map((v) => `<td style="padding:5px 4px; text-align:right;">${v ? fmtK(v) : "—"}</td>`).join("")}</tr>
+      </tbody></table></div>`;
+  })();
 
   html += `<div class="section-label">Employer Solutions fleet — demand rule</div>`;
   html += `<div class="hint" style="margin-bottom:8px;">The operating fleet is driven by demand rather than a fixed rollout. A set number of vehicles is staffed from the start; when they would run past the utilisation trigger, another vehicle and team come on — up to the fleet actually owned. Teams are not demobilised once added.</div>`;
@@ -6821,14 +8110,8 @@ function renderGeneralAssumptions() {
       </tbody></table></div>`;
   })();
 
-  html += `<div class="section-label">LOA Allowances — operational days</div>`;
-  html += `<div class="hint" style="margin-bottom:8px;">LOAs are paid per staff member per <b>operational day</b>. Operational days are derived from the work each vehicle actually does — its monthly assessments divided by the assessments it completes in a day — so allowances flex with volume instead of sitting flat. Dental has no assessment count, so its operational days are set directly.</div>`;
-  html += `<div class="field-row"><label>LOA rate per staff member per day (R)</label><input type="number" id="loaRate" value="${s.loa.ratePerDay}"></div>`;
-  html += `<div class="field-row"><label>Employer Solutions (POCx) — assessments per day</label><input type="number" id="loaApdPocx" value="${s.loa.assessmentsPerDay.pocx}"></div>`;
-  html += `<div class="field-row"><label>Community Health (SIOC) — assessments per day</label><input type="number" id="loaApdSioc" value="${s.loa.assessmentsPerDay.sioc}"></div>`;
-  html += `<div class="field-row"><label>POCx — maximum assessments per day</label><input type="number" id="loaMaxPocx" value="${s.loa.maxAssessmentsPerDay.pocx}"></div>`;
-  html += `<div class="field-row"><label>SIOC — maximum assessments per day</label><input type="number" id="loaMaxSioc" value="${s.loa.maxAssessmentsPerDay.sioc}"></div>`;
-  html += `<div class="field-row"><label>Dental — operational days per month</label><input type="number" id="loaDentalDays" value="${s.loa.dentalDaysPerMonth}"></div>`;
+  html += `<div class="section-label">LOA Allowances</div>`;
+  html += `<div class="hint" style="margin-bottom:14px;">LOA assumptions now sit with each solution, under <b>Guud Mobiles</b> — open the Employer Solutions, Community Health or Dental product tab and look for “LOA Allowances”. Each solution sets its own basis, days and staff count; the rate of ${fmtR(s.loa.ratePerDay)} per person per night is shared across all of them.</div>`;
   html += `<div class="field-row"><label>Staff earning LOA — POCx vehicle</label><input type="number" id="loaStaffPocx" value="${s.loa.staffPerVehicle.pocx}"></div>`;
   html += `<div class="field-row"><label>Staff earning LOA — SIOC vehicle</label><input type="number" id="loaStaffSioc" value="${s.loa.staffPerVehicle.sioc}"></div>`;
   html += `<div class="field-row"><label>Staff earning LOA — Dental vehicle</label><input type="number" id="loaStaffDental" value="${s.loa.staffPerVehicle.dental}"></div>`;
@@ -6922,6 +8205,11 @@ function renderGeneralAssumptions() {
     mobilesState.hoTargetYear = Number(e.target.value || 0);
     renderDashboard();
   });
+  const diBind = (id, apply, isCheck) => { const el = document.getElementById(id); if (el) el.addEventListener(isCheck ? "change" : "input", (e) => { apply(isCheck ? e.target.checked : Number(e.target.value || 0)); renderGeneralAssumptions(); renderDashboard(); renderSADashboard(); renderSummary(); }); };
+  diBind("diEnabled", (v) => { sharedState.deferredIncome.enabled = v; }, true);
+  diBind("diPocx", (v) => { sharedState.deferredIncome.leadMonths.pocx = v; });
+  diBind("diSioc", (v) => { sharedState.deferredIncome.leadMonths.sioc = v; });
+  diBind("diDental", (v) => { sharedState.deferredIncome.leadMonths.dental = v; });
   const frBind = (id, apply, isCheck) => { const el = document.getElementById(id); if (el) el.addEventListener(isCheck ? "change" : "input", (e) => { apply(isCheck ? e.target.checked : Number(e.target.value || 0)); renderGeneralAssumptions(); renderDashboard(); renderSummary(); }); };
   frBind("frEnabled", (v) => { sharedState.fleetRule.enabled = v; }, true);
   frBind("frBase", (v) => { sharedState.fleetRule.baseStaffed = v; });
@@ -6929,14 +8217,21 @@ function renderGeneralAssumptions() {
   frBind("frTrigger", (v) => { sharedState.fleetRule.utilisationTrigger = v; });
   const bindLoa = (id, apply) => { const el = document.getElementById(id); if (el) el.addEventListener("input", (e) => { apply(Number(e.target.value || 0)); renderGeneralAssumptions(); renderDashboard(); renderSummary(); }); };
   bindLoa("loaRate", (v) => { sharedState.loa.ratePerDay = v; });
-  bindLoa("loaApdPocx", (v) => { sharedState.loa.assessmentsPerDay.pocx = v; });
-  bindLoa("loaApdSioc", (v) => { sharedState.loa.assessmentsPerDay.sioc = v; });
-  bindLoa("loaMaxPocx", (v) => { sharedState.loa.maxAssessmentsPerDay.pocx = v; });
-  bindLoa("loaMaxSioc", (v) => { sharedState.loa.maxAssessmentsPerDay.sioc = v; });
-  bindLoa("loaDentalDays", (v) => { sharedState.loa.dentalDaysPerMonth = v; });
-  bindLoa("loaStaffPocx", (v) => { sharedState.loa.staffPerVehicle.pocx = v; });
-  bindLoa("loaStaffSioc", (v) => { sharedState.loa.staffPerVehicle.sioc = v; });
-  bindLoa("loaStaffDental", (v) => { sharedState.loa.staffPerVehicle.dental = v; });
+  const reLoa = () => { renderGeneralAssumptions(); renderDashboard(); renderSummary(); };
+  document.querySelectorAll(".loa-basis").forEach((el) => el.addEventListener("change", (e) => {
+    sharedState.loa.basis[e.target.dataset.k] = e.target.value;
+    if (e.target.dataset.k === "dental") sharedState.loa.dentalDaysPerMonth = sharedState.loa.loaDaysPerMonth.dental;
+    reLoa();
+  }));
+  document.querySelectorAll(".loa-apd").forEach((el) => el.addEventListener("input", (e) => { sharedState.loa.assessmentsPerDay[e.target.dataset.k] = Number(e.target.value || 0); reLoa(); }));
+  document.querySelectorAll(".loa-days").forEach((el) => el.addEventListener("input", (e) => {
+    const k = e.target.dataset.k, v = Number(e.target.value || 0);
+    sharedState.loa.loaDaysPerMonth[k] = v;
+    if (k === "dental") sharedState.loa.dentalDaysPerMonth = v;
+    reLoa();
+  }));
+  document.querySelectorAll(".loa-staff").forEach((el) => el.addEventListener("input", (e) => { sharedState.loa.staffPerVehicle[e.target.dataset.k] = Number(e.target.value || 0); reLoa(); }));
+  document.querySelectorAll(".loa-max").forEach((el) => el.addEventListener("input", (e) => { sharedState.loa.maxAssessmentsPerDay[e.target.dataset.k] = Number(e.target.value || 0); reLoa(); }));
   document.querySelectorAll(".gen-extveh").forEach((inp) => {
     inp.addEventListener("input", (ev) => {
       sharedState.externalVehicleCount[Number(ev.target.dataset.i)] = Number(ev.target.value || 0);
@@ -8615,9 +9910,9 @@ function computeXtendDebtService() {
     rows.vehicleSales.push(x.series.vehicleSales[m]);
 
     // LOAs actually payable this month, across the active fleet
-    const loa = ent.totalActivePocx[m] * loaForVehicleMonth("pocx", ent.totalActivePocx[m] ? pv / ent.totalActivePocx[m] : 0)
-              + ent.totalActiveSioc[m] * loaForVehicleMonth("sioc", ent.totalActiveSioc[m] ? sv / ent.totalActiveSioc[m] : 0)
-              + ent.totalActiveDental[m] * (dv > 0 ? loaForVehicleMonth("dental", 1) : 0);
+    const loa = ent.totalActivePocx[m] * loaForVehicleMonth("pocx", ent.totalActivePocx[m] ? pv / ent.totalActivePocx[m] : 0, m)
+              + ent.totalActiveSioc[m] * loaForVehicleMonth("sioc", ent.totalActiveSioc[m] ? sv / ent.totalActiveSioc[m] : 0, m)
+              + ent.totalActiveDental[m] * (dv > 0 ? loaForVehicleMonth("dental", 1, m) : 0);
     const fuel = ent.totalActivePocx[m] * fuelP + ent.totalActiveSioc[m] * fuelS + ent.totalActiveDental[m] * fuelD;
 
     const salaries = -x.series.payroll[m];
@@ -9251,15 +10546,11 @@ function renderBreakevenAllEntitiesCard(be) {
 }
 
 /* ============================================================
-   USER PERMISSIONS — creates real Cognito logins and records
-   which sections each login may see / edit (enforced by auth.js
-   at sign-in).
+   USER PERMISSIONS — planning tool, not enforced access control
    ============================================================ */
 function renderUserPermissions() {
   const host = document.getElementById("userPermissionsHost");
   const users = mobilesState.userPermissions;
-
-  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
   function userCardHTML(u) {
     const mobilesTabsHTML = MOBILES_PERMISSION_TABS.map((t) => `
@@ -9267,37 +10558,20 @@ function renderUserPermissions() {
     const saTabsHTML = SA_PERMISSION_TABS.map((t) => `
       <label class="perm-tab-check"><input type="checkbox" data-user="${u.id}" data-field="guudSA.tabs.${t.key}" ${u.guudSA.tabs[t.key] ? "checked" : ""} ${u.guudSA.enabled ? "" : "disabled"}> ${t.label}</label>`).join("");
 
-    const statusHTML = u.created
-      ? `<span style="color:#0f7b4d; font-weight:700;">✓ Login created for ${esc(u.username)}</span>`
-      : `<span style="color:#6B6B6B;">No login yet — fill in name + email, tick access, then create the login.</span>`;
-
-    const tempPwHTML = u.created && u.tempPassword ? `
-      <div class="banner" style="margin-top:10px; align-items:flex-start;">
-        <div>Temporary password for <strong>${esc(u.username)}</strong>: <code style="background:#fff; padding:2px 8px; border-radius:4px; font-size:14px; user-select:all;">${esc(u.tempPassword)}</code><br>
-        <span class="hint">Share this privately. Cognito emailed the user a verification code — at first sign-in they enter it, then use this password. They can change the password afterwards via “Forgot password”.</span></div>
-      </div>` : "";
-
-    const createBtnHTML = u.created
-      ? `<span class="hint" style="align-self:center;">Removing this card only removes it here — the Cognito login stays active.</span>`
-      : `<button class="btn primary" data-create-user="${u.id}" style="height:34px;">Create Login</button>`;
-
     return `
     <div class="card" data-user-card="${u.id}" style="margin-bottom:14px;">
       <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px;">
         <div class="field-row" style="flex:1; min-width:180px;"><label>Name</label>
-          <input type="text" data-user="${u.id}" data-field="name" value="${esc(u.name)}" placeholder="e.g. Lillian Majoro"></div>
-        <div class="field-row" style="flex:1; min-width:200px;"><label>Email (login username)</label>
-          <input type="text" data-user="${u.id}" data-field="email" value="${esc(u.email)}" placeholder="name@guud.co.za" ${u.created ? "disabled" : ""}></div>
+          <input type="text" data-user="${u.id}" data-field="name" value="${u.name}" placeholder="e.g. Lillian Majoro"></div>
+        <div class="field-row" style="flex:1; min-width:200px;"><label>Email (optional)</label>
+          <input type="text" data-user="${u.id}" data-field="email" value="${u.email}" placeholder="name@guud.co.za"></div>
         <div class="field-row" style="min-width:140px;"><label>Access Level</label>
           <select data-user="${u.id}" data-field="accessLevel">
             <option value="read" ${u.accessLevel === "read" ? "selected" : ""}>Read only</option>
             <option value="write" ${u.accessLevel === "write" ? "selected" : ""}>Read &amp; Write</option>
           </select></div>
-        ${createBtnHTML}
         <button class="btn" data-remove-user="${u.id}" style="height:34px;">Remove</button>
       </div>
-      <div style="margin-bottom:10px;">${statusHTML}</div>
-      ${tempPwHTML}
       <div class="section-label">Access</div>
       <label class="perm-tab-check"><input type="checkbox" data-user="${u.id}" data-field="generalAssumptions" ${u.generalAssumptions ? "checked" : ""}> General Assumptions</label>
       <label class="perm-tab-check"><input type="checkbox" data-user="${u.id}" data-field="summary" ${u.summary ? "checked" : ""}> Summary</label>
@@ -9316,12 +10590,12 @@ function renderUserPermissions() {
     <div class="card">
       <div class="eyebrow">Access Control</div>
       <h3>User Permissions</h3>
-      <div class="banner" style="margin-bottom:14px; align-items:flex-start;">
-        <div><strong>This tab creates real logins.</strong> Each user is created in the dashboard's sign-in system with the access you select below. At sign-in they only see the sections you grant; <strong>Read only</strong> users cannot change any numbers, <strong>Read &amp; Write</strong> users can edit their sections. New users get an email with a verification code — give them the temporary password shown after creating their login. Super Admins always see everything. Enforcement happens in this dashboard's browser UI.</div>
+      <div class="banner negative" style="margin-bottom:14px; align-items:flex-start;">
+        <div>⚠ Planning tool only, not enforced access control. This is a single, unauthenticated file with no login system or server — anyone who opens it can see and edit everything regardless of what's configured here. Use this tab to document and plan an access policy for whenever real authentication is added (e.g. behind a company login), not as an actual security boundary today.</div>
       </div>
       <button class="btn primary" id="addUserBtn">+ Add User</button>
     </div>
-    ${users.length ? users.map(userCardHTML).join("") : `<div class="card"><div class="hint">No users added yet. Click "+ Add User" above, fill in their details, tick their access, then click "Create Login" on their card.</div></div>`}
+    ${users.length ? users.map(userCardHTML).join("") : `<div class="card"><div class="hint">No users added yet. Click "+ Add User" above to start planning access.</div></div>`}
   `;
 
   document.getElementById("addUserBtn").addEventListener("click", () => {
@@ -9333,35 +10607,6 @@ function renderUserPermissions() {
       const id = Number(btn.dataset.removeUser);
       const idx = users.findIndex((u) => u.id === id);
       if (idx > -1) users.splice(idx, 1);
-      renderUserPermissions();
-    });
-  });
-  document.querySelectorAll("[data-create-user]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = Number(btn.dataset.createUser);
-      const user = users.find((u) => u.id === id);
-      if (!user) return;
-      const name = (user.name || "").trim();
-      const email = (user.email || "").trim().toLowerCase();
-      if (!name) { alert("Enter the user's name first."); return; }
-      if (!/^\S+@\S+\.\S+$/.test(email)) { alert("Enter a valid email — it becomes their login username and receives the verification code."); return; }
-      if (typeof window.xtendCreateUser !== "function") { alert("Auth module not loaded yet — try again in a moment."); return; }
-      btn.disabled = true;
-      btn.textContent = "Creating…";
-      try {
-        const perms = {
-          generalAssumptions: !!user.generalAssumptions,
-          summary: !!user.summary,
-          guudMobiles: { enabled: !!user.guudMobiles.enabled, tabs: user.guudMobiles.tabs },
-          guudSA: { enabled: !!user.guudSA.enabled, tabs: user.guudSA.tabs },
-        };
-        const res = await window.xtendCreateUser({ name, email, access: user.accessLevel, perms });
-        user.created = true;
-        user.username = email;
-        user.tempPassword = res.password;
-      } catch (err) {
-        alert("Could not create login: " + (err && err.message ? err.message : err));
-      }
       renderUserPermissions();
     });
   });
@@ -10053,7 +11298,13 @@ function buildAssumptionsWorkbook() {
 
   // ---- Raw data (authoritative for re-import; not meant to be hand-edited) ----
   const bundle = { mobiles: mobilesState, general: sharedState, sa: saState, subs: subsState, eco: ecoState };
-  const rawSheet = XLSX.utils.aoa_to_sheet([["json"], [JSON.stringify(bundle)]]);
+  // Excel caps a single cell at 32,767 characters and the state has outgrown
+  // that, so it is written in chunks down the column and rejoined on import.
+  const rawStr = JSON.stringify(bundle);
+  const CHUNK = 30000;
+  const rawRows = [["json"]];
+  for (let i = 0; i < rawStr.length; i += CHUNK) rawRows.push([rawStr.slice(i, i + CHUNK)]);
+  const rawSheet = XLSX.utils.aoa_to_sheet(rawRows);
   XLSX.utils.book_append_sheet(wb, rawSheet, "RawData");
   wb.Workbook = wb.Workbook || {};
   wb.Workbook.Sheets = wb.Workbook.Sheets || [];
@@ -10074,6 +11325,11 @@ document.getElementById("exportSAModelBtn").addEventListener("click", () => {
   XLSX.writeFile(wb, "guud-south-africa-financial-model.xlsx");
 });
 
+document.getElementById("printMobilesPackBtn").addEventListener("click", () => { printMobilesManagementPack(); });
+document.getElementById("exportMobilesPackBtn").addEventListener("click", () => {
+  const wb = buildMobilesManagementPackWorkbook();
+  XLSX.writeFile(wb, "guud-mobiles-management-pack.xlsx");
+});
 document.getElementById("exportSubsModelBtn").addEventListener("click", () => {
   const wb = buildSubsidiariesWorkbook();
   XLSX.writeFile(wb, "guud-group-subsidiaries-financial-model.xlsx");
@@ -10096,7 +11352,10 @@ document.getElementById("importFile").addEventListener("change", (e) => {
       const wb = XLSX.read(ev.target.result, { type: "array" });
       const rawSheet = wb.Sheets["RawData"];
       if (!rawSheet) throw new Error("This doesn't look like a Guud Unit Economics assumptions export — no RawData sheet found.");
-      const rawJson = XLSX.utils.sheet_to_json(rawSheet, { header: 1 })[1][0];
+      // Rejoin the chunks written by the exporter (older single-cell exports
+      // still work, since they are simply a one-chunk file).
+      const rawRowsIn = XLSX.utils.sheet_to_json(rawSheet, { header: 1 });
+      const rawJson = rawRowsIn.slice(1).map((r) => (r && r[0] != null ? String(r[0]) : "")).join("");
       const parsed = JSON.parse(rawJson);
       // Support both the current bundled export ({ mobiles, general, sa }) and an
       // older mobilesState-only export, for backward compatibility.
@@ -10193,6 +11452,7 @@ function setEntityTab(key) {
   document.getElementById("entityEcosystem").style.display = isEcosystemEntityKey(key) ? "" : "none";
   document.getElementById("entitySensitivity").style.display = key === "sensitivity" ? "" : "none";
   document.getElementById("entityPipeline").style.display = key === "pipeline" ? "" : "none";
+  document.getElementById("entitySars").style.display = key === "sars" ? "" : "none";
   document.getElementById("entitySummary").style.display = key === "summary" ? "" : "none";
   document.getElementById("entityPermissions").style.display = key === "permissions" ? "" : "none";
   if (key === "general") { renderGeneralAssumptions(); }
@@ -10204,6 +11464,7 @@ function setEntityTab(key) {
     renderSubsidiaryInputsPanel(); renderSubsidiaryDashboard();
   }
   if (key === "pipeline") { renderPipeline(); }
+  if (key === "sars") { renderSarsDebt(); }
   if (key === "summary") { renderSummary(); }
   if (isEcosystemEntityKey(key)) {
     // The three ecosystem tabs share one panel, driven by which entity tab is
@@ -10305,7 +11566,5 @@ if (savedCombined) {
 }
 </script>
 <div id="printStage"></div>
-<script src="auth.js?v=7"></script>
 </body>
 </html>
- 
