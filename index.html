@@ -739,11 +739,12 @@
   /* The sub-tab strip becomes one scrolling row rather than a wrapped
      block three rows deep — Guud Mobiles now carries 18 tabs, and a
      wrapped strip pushed the actual figures below the fold. */
+  /* The strip wraps rather than scrolling, so every tab is visible at once
+     without hunting sideways. Roughly two rows at typical widths. */
   .output-tabbar, .sa-output-tabs, .sub-output-tabs, .eco-output-tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: thin;
+    flex-wrap: wrap;
+    overflow: visible;
+    row-gap: 2px;
   }
   .output-tab, .sa-output-tab, .sub-output-tab, .eco-output-tab {
     flex: 0 0 auto;
@@ -836,9 +837,9 @@
     border-radius: 8px;
   }
   .output-tab, .sa-output-tab {
-    font-weight: 500; font-size: 12px; letter-spacing: 1px;
+    font-weight: 500; font-size: 11px; letter-spacing: 0.4px;
     text-transform: uppercase; color: #C9C5D6;
-    padding: 11px 16px; border-radius: 0;
+    padding: 8px 11px; border-radius: 0;
     border-bottom: 2px solid transparent;
   }
   .output-tab:hover, .sa-output-tab:hover { color: #fff; background: transparent; }
@@ -847,10 +848,10 @@
     border-bottom-color: var(--teal);
   }
   .assump-tab {
-    text-transform: uppercase; letter-spacing: 1px; font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.4px; font-size: 11px;
     color: #C9C5D6; border-radius: 0;
     border-right: 1px solid rgba(255,255,255,0.16);
-    border-bottom: 2px solid transparent; padding: 11px 16px; margin-right: 6px;
+    border-bottom: 2px solid transparent; padding: 8px 11px; margin-right: 5px;
   }
   .assump-tab:hover { color: #fff; }
   .assump-tab.active { background: rgba(255,255,255,0.06); color: #fff; border-bottom-color: var(--teal); }
@@ -964,16 +965,21 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
   </div>
   <div class="global-controls">
     <span class="save-status" id="saveStatus">Loaded saved inputs from 2026/08/10, 06:21:03</span>
-    <button class="btn" id="resetBtn">Reset to Session Defaults</button>
-    <button class="btn" id="exportBtn">Export Assumptions (Excel)</button>
-    <button class="btn" id="importBtn">Import Assumptions (Excel)</button>
-    <button class="btn" id="exportMobilesModelBtn">📊 Export Guud Mobiles Model</button>
-    <button class="btn" id="exportSAModelBtn">📊 Export Guud SA Model</button>
-    <button class="btn" id="exportSubsModelBtn">📊 Export Subsidiaries Model</button>
-    <button class="btn" id="printMobilesPackBtn">🖨 Guud Mobiles Pack (PDF)</button>
-    <button class="btn" id="exportMobilesPackBtn">📊 Guud Mobiles Pack (Excel)</button>
     <button class="btn" id="railToggleBtn" title="Show or hide the entity list">☰ Entities</button>
+    <button class="btn" id="ioToggleBtn" title="Import, export and print">⇅ Data &amp; Exports</button>
     <button class="btn primary" id="saveInputsBtn">💾 Save Inputs</button>
+    <!-- Import, export and print live behind a toggle so the reading area is
+         as large as possible by default; they are occasional actions. -->
+    <div id="ioTray" style="display:none; flex-basis:100%; gap:8px; flex-wrap:wrap; padding-top:8px; margin-top:4px; border-top:1px solid rgba(255,255,255,0.12);">
+      <button class="btn" id="resetBtn">Reset to Session Defaults</button>
+      <button class="btn" id="exportBtn">Export Assumptions (Excel)</button>
+      <button class="btn" id="importBtn">Import Assumptions (Excel)</button>
+      <button class="btn" id="exportMobilesModelBtn">📊 Export Guud Mobiles Model</button>
+      <button class="btn" id="exportSAModelBtn">📊 Export Guud SA Model</button>
+      <button class="btn" id="exportSubsModelBtn">📊 Export Subsidiaries Model</button>
+      <button class="btn" id="printMobilesPackBtn">🖨 Guud Mobiles Pack (PDF)</button>
+      <button class="btn" id="exportMobilesPackBtn">📊 Guud Mobiles Pack (Excel)</button>
+    </div>
     <input type="file" id="importFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
   </div>
 </header>
@@ -1265,25 +1271,23 @@ if(xr(e,"index.xml"))throw new Error("Unsupported NUMBERS 09 file");throw new Er
 
   <div class="output-col">
     <div class="output-tabbar">
-      <div class="output-tab active" data-output="general">General — Product Economics</div>
+      <div class="output-tab active" data-output="general">Product Economics</div>
       <div class="output-tab" data-output="nc">Northern Cape</div>
       <div class="output-tab" data-output="gt">Gauteng</div>
       <div class="output-tab" data-output="kzn">KZN</div>
       <div class="output-tab" data-output="wc">Western Cape</div>
-      <div class="output-tab" data-output="consolidated">National Operations P&amp;L</div>
       <div class="output-tab" data-output="supportoffice">Support Office</div>
-      <div class="output-tab" data-output="entity">Entity Consolidated P&amp;L</div>
-      <div class="output-tab" data-output="mobilefinancials">Mobile Financials</div>
-      <div class="output-tab" data-output="groupconsolidated">Group Balance Sheet &amp; Cash Flow</div>
-      <div class="output-tab" data-output="payrollassumptions">Payroll Assumptions</div>
-      <div class="output-tab" data-output="opreadiness">Operational Readiness</div>
+      <div class="output-tab" data-output="entity">Entity P&amp;L</div>
+      <div class="output-tab" data-output="groupconsolidated">Group BS &amp; Cash Flow</div>
+      <div class="output-tab" data-output="payrollassumptions">Payroll</div>
+      <div class="output-tab" data-output="opreadiness">Op. Readiness</div>
       <div class="output-tab" data-output="allocations">Allocations</div>
       <div class="output-tab" data-output="fleetpnl">Fleet P&amp;L (Monthly)</div>
       <div class="output-tab" data-output="stock">Stock</div>
       <div class="output-tab" data-output="clientpnl">Client P&amp;L</div>
       <div class="output-tab" data-output="upcomingorders">Upcoming Orders</div>
-      <div class="output-tab" data-output="detailedcashflow">Detailed Cash Flow</div>
-      <div class="output-tab" data-output="check">Reconciliation Check</div>
+      <div class="output-tab" data-output="detailedcashflow">Detailed Cashflow</div>
+      <div class="output-tab" data-output="check">Reconciliation</div>
     </div>
     <div class="stack" id="dashboardHost">
     <div class="divider-label">Guud Employer Solutions (POCx)</div>
@@ -4267,6 +4271,15 @@ function defaultSharedState() {
     // subsistence, so LOA is switched off wherever it applies. Only solutions
     // billed per assessment can carry it — Dental is a fixed monthly fee, so
     // there is no assessment count to pay against.
+    // Who can be recorded as the salesperson on a contract. An agent linked to
+    // a region is that region's RM, and their commission is routed to that
+    // region's earnings dashboard; agents with no region still earn commission
+    // but it is reported on the pipeline rather than against a region.
+    salesAgents: [],
+    // Levels below which a mobile is flagged on its landing page. Fed from
+    // telemetry once the feed is live.
+    opsThresholds: { solarPct: 30, fuelBalance: 1500, dataGb: 5, satisfaction: 4,
+                     utilisationPct: 80, vehicleTriggerPct: 85 },
     // Regional Manager earnings. Three lines, all assumptions:
     //   delivery  — a rate on every assessment delivered by a mobile in the
     //               region, excluding SIOC mobiles which are managed instead
@@ -4512,6 +4525,23 @@ if (sharedState.orderSchedule && typeof sharedState.orderSchedule.placesKey !== 
 // Volume is pipeline-derived, so derive it on load rather than trusting a
 // volume plan saved before the pipeline became the only source.
 try { applyPipelineToVolumePlan(); } catch (e) { /* pipeline not ready yet */ }
+if (!sharedState.opsThresholds) sharedState.opsThresholds = defaultSharedState().opsThresholds;
+if (!Array.isArray(sharedState.salesAgents)) sharedState.salesAgents = [];
+// Seed an agent for each region's RM so commission has somewhere to route to,
+// and keep the name in step if the RM changes on the region tab.
+tradingRegionKeys().forEach((rk) => {
+  const nm = ((mobilesState.regions[rk] || {}).rmName || "").trim();
+  if (!nm) return;
+  const existing = sharedState.salesAgents.find((a) => a.regionKey === rk);
+  if (existing) { existing.name = nm; return; }
+  sharedState.salesAgents.push({ id: nextId(), name: nm, role: "Regional Manager", regionKey: rk });
+});
+// Older files recorded the salesperson as a free-text RM name.
+(sharedState.pipeline && sharedState.pipeline.lines ? sharedState.pipeline.lines : []).forEach((l) => {
+  if (typeof l.salesAgentId === "number") return;
+  const match = sharedState.salesAgents.find((a) => a.name === (l.salesRM || "").trim());
+  l.salesAgentId = match ? match.id : 0;
+});
 if (!sharedState.rmEarnings) sharedState.rmEarnings = defaultSharedState().rmEarnings;
 if (!sharedState.rmEarnings.siocManagement) sharedState.rmEarnings.siocManagement = defaultSharedState().rmEarnings.siocManagement;
 if (!sharedState.crewCharge) sharedState.crewCharge = defaultSharedState().crewCharge;
@@ -4552,6 +4582,7 @@ sharedState.pipeline.lines.forEach((l) => {
   // Which RM sold this contract. Their commission earns as the work is
   // delivered, not when the contract is signed.
   if (typeof l.salesRM !== "string") l.salesRM = "";
+  if (typeof l.salesAgentId !== "number") l.salesAgentId = 0;
   if (typeof l.deployRegion !== "string") l.deployRegion = "";
   if (typeof l.site !== "string") l.site = "";
   if (l.saleType !== "regional" && l.saleType !== "platform") l.saleType = "platform";
@@ -4574,6 +4605,31 @@ sharedState.pipeline.lines.forEach((l) => {
 // A mobile permanently committed to a client contract cannot be scheduled
 // against anything else. SIOC holds 100% of Community Health General and
 // Dental, so those mobiles are locked to it by default.
+/* Operational state that will be fed from source systems — vehicle telemetry,
+   the operations database, the ticketing system and the approvals workflow.
+   Held here so the screens are real and editable now, and so the shape of the
+   data the feeds must deliver is already defined. */
+if (!mobilesState.telemetry) mobilesState.telemetry = {};
+if (!mobilesState.opsMetrics) mobilesState.opsMetrics = {};
+if (!Array.isArray(mobilesState.tasks)) mobilesState.tasks = [];
+if (!Array.isArray(mobilesState.approvals)) mobilesState.approvals = [];
+(mobilesState.payroll.fleets || []).filter((f) => !f.isOverhead).forEach((f) => {
+  if (!mobilesState.telemetry[f.fleet]) {
+    mobilesState.telemetry[f.fleet] = {
+      solarPct: null, internetOk: null, fuelBalance: null, dataGb: null,
+      equipment: { health: null, vision: null, audiology: null, dental: null },
+      updatedAt: "",
+    };
+  }
+  if (!mobilesState.opsMetrics[f.fleet]) {
+    mobilesState.opsMetrics[f.fleet] = {
+      assessmentsToday: null, monthToDate: null, operationalDays: null,
+      scheduledHours: null, actualHours: null, satisfaction: null, journeyMinutes: null,
+      staff: {},
+    };
+  }
+});
+
 // Vehicle compliance, to be sourced from the fleet compliance database.
 (mobilesState.payroll.fleets || []).forEach((f) => {
   if (typeof f.insuranceExpiry !== "string") f.insuranceExpiry = "";
@@ -8631,6 +8687,25 @@ let allocFilter = "";
 function rmNameFor(rk) {
   return ((mobilesState.regions[rk] || {}).rmName || "").trim();
 }
+function salesAgentById(id) {
+  return (sharedState.salesAgents || []).find((a) => a.id === Number(id)) || null;
+}
+// Assessments delivered in each month, by sales agent, from the deployments
+// on the contracts they sold. Commission is earned on delivery.
+function computeSalesAgentVolume() {
+  const out = {};
+  orderDeployments().forEach((d) => {
+    const id = Number(d.line.salesAgentId || 0);
+    if (!id || !["pocx", "sioc"].includes(d.solution) || !d.start) return;
+    if (!out[id]) out[id] = new Array(12).fill(0);
+    d.months.forEach((k) => {
+      const m = fyMonthIndexOf(`${k}-01`);
+      if (m != null && m >= 0 && m < 12) out[id][m] += d.perMonthVolume;
+    });
+  });
+  return out;
+}
+
 function rmOptions() {
   return tradingRegionKeys()
     .map((rk) => ({ rk, name: rmNameFor(rk), region: (mobilesState.regions[rk] || {}).name }))
@@ -8656,19 +8731,14 @@ function computeRegionEarnings(rk) {
 
   // Sales commission: assessments delivered this month on contracts this RM
   // sold. Earned on delivery, so it tracks the deployment dates.
-  const rm = rmNameFor(rk);
-  if (rm) {
-    orderDeployments().forEach((d) => {
-      if ((d.line.salesRM || "").trim() !== rm) return;
-      if (!["pocx", "sioc"].includes(d.solution) || !d.start) return;
-      d.months.forEach((k) => {
-        const m = fyMonthIndexOf(`${k}-01`);
-        if (m == null || m < 0 || m > 11) return;
-        out.soldAssessments[m] += d.perMonthVolume;
-      });
-    });
-    for (let m = 0; m < n; m++) out.salesComm[m] = out.soldAssessments[m] * Number(E.salesCommission || 0);
-  }
+  // Any sales agent linked to this region routes their commission here.
+  const vols = computeSalesAgentVolume();
+  (sharedState.salesAgents || []).filter((a) => a.regionKey === rk).forEach((a) => {
+    const v = vols[a.id];
+    if (!v) return;
+    for (let m = 0; m < n; m++) out.soldAssessments[m] += v[m];
+  });
+  for (let m = 0; m < n; m++) out.salesComm[m] = out.soldAssessments[m] * Number(E.salesCommission || 0);
   for (let m = 0; m < n; m++) out.total[m] = out.delivery[m] + out.siocMgmt[m] + out.salesComm[m];
   const sum = (a) => a.reduce((x, v) => x + v, 0);
   out.fy = { delivery: sum(out.delivery), siocMgmt: sum(out.siocMgmt), salesComm: sum(out.salesComm),
@@ -8767,6 +8837,748 @@ function renderRegionMobilePnLCard(rk) {
   </div>`;
 }
 
+/* ============================================================
+   REGION DRILL-DOWN
+   Each region tab carries a second level of navigation — the
+   region itself, then one entry per mobile based there — and a
+   third level of sections beneath each. Mobiles sum into the
+   region: the regional figures on the Region sub-tab are the
+   totals of the mobile sub-tabs plus regional overhead.
+
+   Sections marked "awaiting feed" are backed by real editable
+   state, but the values will come from source systems: vehicle
+   telemetry, the operations database, ticketing and approvals.
+   ============================================================ */
+let regionSub = {};       // regionKey -> "region" | fleet number
+let regionSection = {};   // regionKey + "|" + sub -> section key
+
+const REGION_SECTIONS = [
+  { key: "landing", label: "Landing" },
+  { key: "pnl", label: "P&L" },
+  { key: "ops", label: "Operational Tracking" },
+  { key: "earnings", label: "Regional Earnings" },
+  { key: "pipeline", label: "Pipeline" },
+  { key: "schedule", label: "Regional Schedule" },
+  { key: "tasks", label: "Tasks Outstanding" },
+];
+const MOBILE_SECTIONS = [
+  { key: "landing", label: "Landing" },
+  { key: "pnl", label: "P&L" },
+  { key: "workcap", label: "Working Capital" },
+  { key: "cashflow", label: "Cashflow" },
+  { key: "ops", label: "Operational Tracking" },
+  { key: "schedule", label: "Schedule" },
+  { key: "approvals", label: "Payment Approvals" },
+  { key: "staffing", label: "Staffing & Earnings" },
+  { key: "tasks", label: "Tasks Outstanding" },
+];
+
+function regionMobiles(rk) {
+  return (mobilesState.payroll.fleets || [])
+    .filter((f) => !f.isOverhead && f.dashRegion === rk)
+    .map((f) => ({ fleet: f.fleet, name: f.vehicle || f.fleet, rec: f,
+      bucket: payrollBucketOf(f.vehicleType) }));
+}
+
+function subKey(rk) { return regionSub[rk] || "region"; }
+function sectionKey(rk) {
+  const k = `${rk}|${subKey(rk)}`;
+  const list = subKey(rk) === "region" ? REGION_SECTIONS : MOBILE_SECTIONS;
+  const cur = regionSection[k];
+  return list.some((x) => x.key === cur) ? cur : "landing";
+}
+
+function fmtOr(v, suffix, dash) {
+  return (v === null || v === undefined || v === "") ? (dash || "<span style='color:var(--gray);'>awaiting feed</span>")
+    : `${typeof v === "number" ? Math.round(v).toLocaleString("en-ZA") : v}${suffix || ""}`;
+}
+
+/* ---- exception engine: what needs attention ---- */
+function mobileExceptions(fleet) {
+  const T = sharedState.opsThresholds;
+  const t = mobilesState.telemetry[fleet] || {};
+  const o = mobilesState.opsMetrics[fleet] || {};
+  const rec = (mobilesState.payroll.fleets || []).find((f) => f.fleet === fleet) || {};
+  const out = [];
+  const flag = (level, text, action) => out.push({ level, text, action });
+
+  if (t.solarPct != null && t.solarPct < T.solarPct) flag("warn", `Solar battery at ${Math.round(t.solarPct)}% — below the ${T.solarPct}% threshold`, "Request charge / generator");
+  if (t.internetOk === false) flag("warn", "No internet connectivity — assessments cannot be uploaded", "Log connectivity fault");
+  if (t.fuelBalance != null && t.fuelBalance < T.fuelBalance) flag("warn", `Fuel card balance ${fmtR(t.fuelBalance)} — below ${fmtR(T.fuelBalance)}`, "Request fuel top-up");
+  if (t.dataGb != null && t.dataGb < T.dataGb) flag("warn", `Data balance ${t.dataGb} GB — below ${T.dataGb} GB`, "Request data top-up");
+  Object.entries(t.equipment || {}).forEach(([k, v]) => {
+    if (v === false) flag("warn", `${k.charAt(0).toUpperCase() + k.slice(1)} equipment offline`, "Log equipment fault");
+  });
+  if (o.satisfaction != null && o.satisfaction < T.satisfaction) flag("warn", `Client satisfaction ${o.satisfaction.toFixed(1)} — below ${T.satisfaction}`, "");
+
+  const rd = vehicleReadiness(fleet, cfToday(), cfToday());
+  rd.issues.forEach((x) => flag("warn", x, ""));
+  rd.warnings.forEach((x) => flag("info", x, ""));
+  if (!isTradingRegion(rec.dashRegion)) flag("warn", "No trading region — earns no revenue and cannot be scheduled", "");
+  const noFeed = t.solarPct == null && t.fuelBalance == null && t.dataGb == null;
+  if (noFeed) flag("info", "Telemetry feed not yet connected — solar, fuel, data and equipment status are unknown", "");
+  return out;
+}
+
+function regionExceptions(rk) {
+  const out = [];
+  regionMobiles(rk).forEach((m) => {
+    mobileExceptions(m.fleet).filter((x) => x.level === "warn")
+      .forEach((x) => out.push({ ...x, mobile: m.name }));
+  });
+  // Unallocated demand and shortfalls that belong to this region.
+  orderDeployments().forEach((d) => {
+    if (d.region !== rk) return;
+    const need = minMobilesForDeployment(d);
+    if (d.assigned.length < need) {
+      out.push({ level: "warn", mobile: "\u2014", text: `${d.client} \u00b7 ${d.label} needs ${need} mobiles, ${d.assigned.length} allocated` });
+    }
+  });
+  (mobilesState.tasks || []).filter((t) => t.scope === "region" && t.ref === rk && t.status !== "Done")
+    .forEach((t) => out.push({ level: "info", mobile: "\u2014", text: `Task outstanding: ${t.title}` }));
+  return out;
+}
+
+/* ---- operational tracking ---- */
+function mobileOpsRow(fleet) {
+  const o = mobilesState.opsMetrics[fleet] || {};
+  const util = (o.scheduledHours && o.actualHours) ? (o.actualHours / o.scheduledHours) : null;
+  const perDay = (o.monthToDate && o.operationalDays) ? (o.monthToDate / o.operationalDays) : null;
+  return { ...o, util, perDay };
+}
+
+// How close a region is to justifying another vehicle: how hard the existing
+// fleet is being worked against the single-shift ceiling.
+function regionVehicleTrigger(rk) {
+  const OS = sharedState.orderSchedule;
+  const cap = Number(OS.maxPerMobile || 800);
+  const mobiles = regionMobiles(rk).filter((m) => m.bucket && m.bucket !== "dental");
+  const load = computeMobileLoad(null);
+  const months = [];
+  { const d = new Date(cfToday().getFullYear(), cfToday().getMonth(), 1);
+    for (let i = 0; i < 6; i++) { months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`); d.setMonth(d.getMonth() + 1); } }
+  const rows = months.map((k) => {
+    const committed = mobiles.reduce((a, m) => a + (((load[m.fleet] || {})[k] || {}).total || 0), 0);
+    const capacity = mobiles.length * cap;
+    return { month: k, committed, capacity, pct: capacity ? committed / capacity : 0 };
+  });
+  const peak = rows.reduce((a, r) => Math.max(a, r.pct), 0);
+  const trigger = Number(OS.vehicleTriggerPct || sharedState.opsThresholds.vehicleTriggerPct || 85) / 100;
+  return { rows, mobiles: mobiles.length, cap, peak, trigger, qualifies: peak >= trigger };
+}
+
+/* ---- per-mobile working capital and cashflow ---- */
+function mobileWorkingCapital(fleet) {
+  // Debtors and creditors are entity-level in the model, so a mobile's share
+  // is taken on its share of revenue and variable cost. Stock is real, from
+  // the stock register where it is held by mobile.
+  const d = computeRegionMobilePnLIndex();
+  const me = d.byFleet[fleet];
+  const ent = computeEntityConsolidatedPnL();
+  const shareRev = ent.fy.revenue ? (me ? me.fy.revenue / ent.fy.revenue : 0) : 0;
+  const shareVar = ent.fy.variableCost ? (me ? me.fy.variableCost / ent.fy.variableCost : 0) : 0;
+  const C = sharedState.cashCalendar;
+  const monthlyRev = me ? me.fy.revenue / 12 : 0;
+  const monthlyVar = me ? me.fy.variableCost / 12 : 0;
+  const debtors = monthlyRev * (Number(C.receiptDays || 45) / 30);
+  const creditors = monthlyVar * (Number(C.creditorDays || 30) / 30);
+  const buckets = (total) => [0.55, 0.25, 0.13, 0.07].map((w) => total * w);
+  return { debtors, creditors, shareRev, shareVar,
+    debtorAge: buckets(debtors), creditorAge: buckets(creditors),
+    monthlyRev, monthlyVar };
+}
+
+let _rmpIndex = null;
+function computeRegionMobilePnLIndex() {
+  const byFleet = {}, byName = {};
+  tradingRegionKeys().forEach((rk) => {
+    const d = computeRegionMobilePnL(rk);
+    d.mobiles.forEach((x) => { byName[x.name] = x; });
+  });
+  (mobilesState.payroll.fleets || []).forEach((f) => {
+    const nm = f.vehicle || f.fleet;
+    if (byName[nm]) byFleet[f.fleet] = byName[nm];
+  });
+  return { byFleet, byName };
+}
+
+function mobileCashflow(fleet) {
+  // The mobile's share of the group daily cash view, plus any approved
+  // payments booked against this mobile.
+  const cf = computeDetailedCashFlow();
+  const wc = mobileWorkingCapital(fleet);
+  const approvals = (mobilesState.approvals || []).filter((a) => a.fleet === fleet && a.status === "Approved");
+  const rows = cf.rows.map((r) => {
+    const share = {
+      date: r.date, iso: r.iso, items: [],
+      in: 0, out: 0,
+    };
+    r.items.forEach((i) => {
+      const w = i.cat === "receipts" ? wc.shareRev : i.cat === "consumables" ? wc.shareVar : wc.shareRev;
+      const amt = i.amount * w;
+      if (Math.abs(amt) < 1) return;
+      share.items.push({ ...i, amount: amt, label: `${i.label} (mobile share)` });
+      if (amt >= 0) share.in += amt; else share.out += -amt;
+    });
+    approvals.forEach((a) => {
+      if (a.date === r.iso) {
+        share.items.push({ cat: "approval", label: `Approved: ${a.description}`, amount: -Number(a.amount || 0) });
+        share.out += Number(a.amount || 0);
+      }
+    });
+    share.net = share.in - share.out;
+    return share;
+  });
+  let bal = 0;
+  rows.forEach((r) => { r.opening = bal; bal += r.net; r.closing = bal; });
+  return { rows, closing: bal,
+    totalIn: rows.reduce((a, r) => a + r.in, 0), totalOut: rows.reduce((a, r) => a + r.out, 0),
+    approvals };
+}
+
+/* ---- section renderers: REGION ---- */
+function secRegionLanding(rk) {
+  const ex = regionExceptions(rk);
+  const warns = ex.filter((x) => x.level === "warn");
+  const info = ex.filter((x) => x.level !== "warn");
+  const trig = regionVehicleTrigger(rk);
+  const e = computeRegionEarnings(rk);
+  const d = computeRegionMobilePnL(rk);
+  const kpi = (l, v, sub, bad) => `<div style="flex:1 1 165px; background:${bad ? "var(--amber-bg)" : "var(--light)"}; border-radius:10px; padding:10px 12px;">
+    <div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">${l}</div>
+    <div style="font-family:var(--font-head); font-size:21px; font-weight:700; color:${bad ? "#8A6015" : "var(--ink)"};">${v}</div>
+    <div style="font-size:10.5px; color:var(--gray);">${sub}</div></div>`;
+  return `<div class="card">
+    <div class="eyebrow">${mobilesState.regions[rk].name}</div><h3>Landing \u2014 what needs attention</h3>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      ${kpi("Exceptions", warns.length, warns.length ? "require action" : "region is clean", warns.length > 0)}
+      ${kpi("Mobiles", d.mobiles.length, `${trig.mobiles} on assessment work`)}
+      ${kpi("Fleet utilisation", `${Math.round(trig.peak * 100)}%`, `peak of next 6 months \u00b7 trigger ${Math.round(trig.trigger * 100)}%`, trig.qualifies)}
+      ${kpi("RM earnings FY", fmtR(e.fy.total), "delivery + SIOC + commission")}
+    </div>
+    ${trig.qualifies ? `<div class="banner negative" style="margin-bottom:10px;"><div><b>\u25ce Qualifies for an additional vehicle</b> \u2014 peak committed load reaches ${Math.round(trig.peak * 100)}% of the ${trig.mobiles}-mobile ceiling, at or above the ${Math.round(trig.trigger * 100)}% trigger. See Operational Tracking.</div></div>` : ""}
+    ${warns.length ? warns.map((x) => `<div style="display:flex; gap:9px; padding:8px 12px; border-radius:9px; margin-bottom:6px; font-size:11px; background:var(--amber-bg); color:#8A6015;">
+      <span style="font-weight:700;">\u26a0</span><span><b>${x.mobile}</b> \u2014 ${x.text}${x.action ? ` <button class="ex-act" style="margin-left:6px; padding:2px 8px; border-radius:20px; border:1px solid #8A6015; background:#fff; color:#8A6015; font-size:9.5px; font-weight:700; cursor:pointer;">${x.action}</button>` : ""}</span></div>`).join("")
+      : `<div style="padding:10px 12px; border-radius:9px; background:var(--mint-bg); color:#1173B8; font-size:11px;">No exceptions in this region.</div>`}
+    ${info.length ? `<div class="section-label" style="margin-top:14px;">For information</div>
+      ${info.map((x) => `<div style="padding:6px 12px; border-radius:9px; margin-bottom:5px; font-size:10.5px; background:var(--light); color:var(--gray);">${x.mobile !== "\u2014" ? `<b>${x.mobile}</b> \u2014 ` : ""}${x.text}</div>`).join("")}` : ""}
+  </div>`;
+}
+
+function secRegionOps(rk) {
+  const trig = regionVehicleTrigger(rk);
+  const mobs = regionMobiles(rk);
+  const rows = mobs.map((m) => {
+    const o = mobileOpsRow(m.fleet);
+    return `<tr><td style="padding:5px 8px; font-weight:500;">${m.name}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtOr(o.assessmentsToday)}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtOr(o.monthToDate)}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtOr(o.perDay ? Math.round(o.perDay) : null)}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtOr(o.scheduledHours, "h")}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtOr(o.actualHours, "h")}</td>
+      <td style="padding:5px 8px; text-align:right;">${o.util == null ? fmtOr(null) : `<b style="color:${o.util < 0.8 ? "var(--red)" : "var(--green)"};">${Math.round(o.util * 100)}%</b>`}</td>
+      <td style="padding:5px 8px; text-align:right;">${o.satisfaction == null ? fmtOr(null) : o.satisfaction.toFixed(1)}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtOr(o.journeyMinutes, " min")}</td></tr>`;
+  }).join("");
+  const agg = mobs.reduce((a, m) => { const o = mobileOpsRow(m.fleet);
+    a.today += o.assessmentsToday || 0; a.mtd += o.monthToDate || 0;
+    a.sched += o.scheduledHours || 0; a.act += o.actualHours || 0; return a; },
+    { today: 0, mtd: 0, sched: 0, act: 0 });
+  return `<div class="card">
+    <div class="eyebrow">${mobilesState.regions[rk].name}</div><h3>Operational Tracking</h3>
+    <div class="hint" style="margin-bottom:12px;">Operational metrics for every mobile in the region and the regional aggregate, plus how close the region is to justifying another vehicle. Metrics come from the operations database \u2014 blanks are awaiting that feed.</div>
+    <div class="section-label">Capacity against the trigger for another vehicle</div>
+    <div style="font-size:10.5px; font-style:italic; color:var(--gray); margin-bottom:8px;">Committed assessments against the ${trig.mobiles} \u00d7 ${trig.cap.toLocaleString("en-ZA")}/month single-shift ceiling. At ${Math.round(trig.trigger * 100)}% the region qualifies for an additional vehicle.</div>
+    <table style="border-collapse:collapse; font-size:11px; margin-bottom:16px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Month</td>
+        <td style="padding:5px 8px; text-align:right;">Committed</td><td style="padding:5px 8px; text-align:right;">Capacity</td>
+        <td style="padding:5px 8px; text-align:right;">Utilisation</td></tr></thead>
+      <tbody>${trig.rows.map((r) => `<tr${r.pct >= trig.trigger ? ' style="background:var(--amber-bg);"' : ""}>
+        <td style="padding:4px 8px;">${r.month}</td>
+        <td style="padding:4px 8px; text-align:right;">${Math.round(r.committed).toLocaleString("en-ZA")}</td>
+        <td style="padding:4px 8px; text-align:right; color:var(--gray);">${Math.round(r.capacity).toLocaleString("en-ZA")}</td>
+        <td style="padding:4px 8px; text-align:right; font-weight:700; color:${r.pct >= trig.trigger ? "#8A6015" : "inherit"};">${Math.round(r.pct * 100)}%</td></tr>`).join("")}</tbody>
+    </table>
+    <div class="section-label">Per mobile</div>
+    <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px; min-width:900px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Mobile</td>
+        <td style="padding:5px 8px; text-align:right;">Today</td><td style="padding:5px 8px; text-align:right;">Month to date</td>
+        <td style="padding:5px 8px; text-align:right;">Per op. day</td><td style="padding:5px 8px; text-align:right;">Sched. hrs</td>
+        <td style="padding:5px 8px; text-align:right;">Actual hrs</td><td style="padding:5px 8px; text-align:right;">Utilisation</td>
+        <td style="padding:5px 8px; text-align:right;">Satisfaction</td><td style="padding:5px 8px; text-align:right;">Journey time</td></tr></thead>
+      <tbody>${rows || `<tr><td colspan="9" style="padding:10px; color:var(--gray);">No mobiles in this region.</td></tr>`}</tbody>
+      <tfoot><tr style="background:var(--teal); color:#fff; font-weight:700;">
+        <td style="padding:5px 8px;">REGION</td>
+        <td style="padding:5px 8px; text-align:right;">${agg.today || "\u2014"}</td>
+        <td style="padding:5px 8px; text-align:right;">${agg.mtd || "\u2014"}</td>
+        <td style="padding:5px 8px; text-align:right;">\u2014</td>
+        <td style="padding:5px 8px; text-align:right;">${agg.sched || "\u2014"}</td>
+        <td style="padding:5px 8px; text-align:right;">${agg.act || "\u2014"}</td>
+        <td style="padding:5px 8px; text-align:right;">${agg.sched ? Math.round((agg.act / agg.sched) * 100) + "%" : "\u2014"}</td>
+        <td colspan="2"></td></tr></tfoot>
+    </table></div>
+  </div>`;
+}
+
+function secRegionPipeline(rk) {
+  const name = mobilesState.regions[rk].name;
+  const lines = (sharedState.pipeline.lines || []).filter((l) => {
+    if (l.deployRegion === rk) return true;
+    const a = salesAgentById(l.salesAgentId);
+    return !!(a && a.regionKey === rk);
+  });
+  const rows = lines.map((l) => {
+    const a = salesAgentById(l.salesAgentId);
+    const vol = pipelineContractedAssessments(l);
+    return `<tr><td style="padding:5px 8px; font-weight:500;">${l.client || "(unnamed)"}</td>
+      <td style="padding:5px 8px;">${(pipelineSolutionMeta(l.solution) || {}).label || l.solution}</td>
+      <td style="padding:5px 8px;">${l.likelihood}</td>
+      <td style="padding:5px 8px;">${a ? a.name : "\u2014"}</td>
+      <td style="padding:5px 8px; text-align:right;">${Math.round(vol).toLocaleString("en-ZA")}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtR(vol * Number(l.price || 0))}</td>
+      <td style="padding:5px 8px; text-align:center;">${(l.sites || []).length || "\u2014"}</td>
+      <td style="padding:5px 8px; font-size:10px; color:var(--gray);">${l.deployRegion === rk ? "delivered here" : "sold by this region"}</td></tr>`;
+  }).join("");
+  return `<div class="card">
+    <div class="eyebrow">${name}</div><h3>Pipeline</h3>
+    <div class="hint" style="margin-bottom:12px;">Every contract and opportunity connected to this region \u2014 either delivered here, or sold by an agent linked to this region. Maintained on the Sales Pipeline tab.</div>
+    <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Client</td>
+        <td style="padding:5px 8px;">Solution</td><td style="padding:5px 8px;">Likelihood</td><td style="padding:5px 8px;">Sales agent</td>
+        <td style="padding:5px 8px; text-align:right;">Assessments</td><td style="padding:5px 8px; text-align:right;">Value</td>
+        <td style="padding:5px 8px; text-align:center;">Sites</td><td style="padding:5px 8px;">Link</td></tr></thead>
+      <tbody>${rows || `<tr><td colspan="8" style="padding:10px; color:var(--gray);">Nothing in the pipeline for this region.</td></tr>`}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function scheduleTable(deps, emptyMsg) {
+  const rows = deps.map((d) => {
+    const need = minMobilesForDeployment(d);
+    return `<tr><td style="padding:5px 8px; font-weight:500;">${d.client}</td>
+      <td style="padding:5px 8px;">${d.label}</td>
+      <td style="padding:5px 8px; white-space:nowrap;">${d.start ? d.start.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "2-digit" }) : "\u2014"}${d.end && d.start && +d.end !== +d.start ? ` \u2013 ${d.end.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "2-digit" })}` : ""}</td>
+      <td style="padding:5px 8px; text-align:right;">${Math.round(d.total).toLocaleString("en-ZA")}</td>
+      <td style="padding:5px 8px; text-align:center;">${d.assigned.length}/${need}</td>
+      <td style="padding:5px 8px; font-size:10px; color:var(--gray);">${d.assigned.map((f) => ((mobilesState.payroll.fleets || []).find((x) => x.fleet === f) || {}).vehicle || f).join(", ") || "unallocated"}</td></tr>`;
+  }).join("");
+  return `<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">
+    <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Client</td>
+      <td style="padding:5px 8px;">Site</td><td style="padding:5px 8px;">Dates</td>
+      <td style="padding:5px 8px; text-align:right;">Assessments</td><td style="padding:5px 8px; text-align:center;">Mobiles</td>
+      <td style="padding:5px 8px;">Allocated</td></tr></thead>
+    <tbody>${rows || `<tr><td colspan="6" style="padding:10px; color:var(--gray);">${emptyMsg}</td></tr>`}</tbody></table></div>`;
+}
+
+function secRegionSchedule(rk) {
+  const fleets = regionMobiles(rk).map((m) => m.fleet);
+  const deps = orderDeployments().filter((d) => d.assigned.some((f) => fleets.includes(f)));
+  return `<div class="card">
+    <div class="eyebrow">${mobilesState.regions[rk].name}</div><h3>Regional Schedule</h3>
+    <div class="hint" style="margin-bottom:12px;">Committed deployments for this region's mobiles, wherever the work is. Scheduling itself is done on Upcoming Orders.</div>
+    ${scheduleTable(deps, "No committed deployments for this region's mobiles.")}
+  </div>`;
+}
+
+function tasksCard(scope, ref, title, note) {
+  const list = (mobilesState.tasks || []).filter((t) => t.scope === scope && t.ref === ref);
+  const rows = list.map((t) => `<tr data-task="${t.id}">
+    <td style="padding:4px 6px;"><input type="text" class="tk-f" data-k="title" value="${(t.title || "").replace(/"/g, "&quot;")}" style="width:250px; font-size:11px;"></td>
+    <td style="padding:4px 6px;"><input type="text" class="tk-f" data-k="owner" value="${(t.owner || "").replace(/"/g, "&quot;")}" placeholder="owner" style="width:130px; font-size:11px;"></td>
+    <td style="padding:4px 6px;"><input type="date" class="tk-f" data-k="due" value="${t.due || ""}" style="font-size:10.5px;"></td>
+    <td style="padding:4px 6px;"><select class="tk-f" data-k="status" style="font-size:11px;">${["Open", "Awaiting approval", "Blocked", "Done"].map((x) => `<option ${t.status === x ? "selected" : ""}>${x}</option>`).join("")}</select></td>
+    <td style="padding:4px 6px; text-align:center;"><button class="tk-del" data-del="${t.id}" style="border:none;background:none;color:var(--red);font-size:15px;font-weight:700;cursor:pointer;">\u00d7</button></td></tr>`).join("");
+  const open = list.filter((t) => t.status !== "Done").length;
+  return `<div class="card">
+    <h3>${title}</h3>
+    <div class="hint" style="margin-bottom:10px;">${note} <b>${open}</b> outstanding. Will be fed from the ticketing system; editable here in the meantime.</div>
+    <table style="border-collapse:collapse; font-size:11px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 6px;">Task</td>
+        <td style="padding:5px 6px;">Owner</td><td style="padding:5px 6px;">Due</td>
+        <td style="padding:5px 6px;">Status</td><td style="padding:5px 6px; text-align:center;">Remove</td></tr></thead>
+      <tbody>${rows || `<tr><td colspan="5" style="padding:8px; color:var(--gray);">Nothing outstanding.</td></tr>`}</tbody>
+    </table>
+    <button class="btn tk-add" data-scope="${scope}" data-ref="${ref}" style="margin-top:10px; background:var(--teal) !important; color:#fff !important; border-color:var(--teal) !important;">+ Add task</button>
+  </div>`;
+}
+
+
+/* ---- section renderers: MOBILE ---- */
+function mobileRec(fleet) { return (mobilesState.payroll.fleets || []).find((f) => f.fleet === fleet) || {}; }
+function mobileName(fleet) { const r = mobileRec(fleet); return r.vehicle || fleet; }
+
+function secMobileLanding(fleet) {
+  const t = mobilesState.telemetry[fleet] || { equipment: {} };
+  const ex = mobileExceptions(fleet);
+  const warns = ex.filter((x) => x.level === "warn");
+  const gauge = (label, val, unit, ok, action, key) => `<div style="flex:1 1 160px; background:${ok === false ? "var(--amber-bg)" : "var(--light)"}; border-radius:10px; padding:10px 12px;">
+    <div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">${label}</div>
+    <div style="font-family:var(--font-head); font-size:20px; font-weight:700; color:${ok === false ? "#8A6015" : "var(--ink)"};">${val}</div>
+    ${ok === false && action ? `<button class="top-up" data-fleet="${fleet}" data-item="${key}" style="margin-top:5px; padding:3px 10px; border-radius:20px; border:1px solid #8A6015; background:#fff; color:#8A6015; font-size:9.5px; font-weight:700; cursor:pointer;">${action}</button>` : ""}
+  </div>`;
+  const T = sharedState.opsThresholds;
+  const eq = t.equipment || {};
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)}</div><h3>Landing \u2014 what needs attention</h3>
+    <div class="hint" style="margin-bottom:12px;">Live status of the mobile. Values come from vehicle telemetry and the equipment monitor; where a reading is below its threshold a top-up request can be raised. Blanks mean the feed is not yet connected \u2014 you can enter readings by hand below until it is.</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      ${gauge("Solar battery", t.solarPct == null ? "\u2014" : Math.round(t.solarPct) + "%", "", t.solarPct == null ? null : t.solarPct >= T.solarPct, "Request charge", "solar")}
+      ${gauge("Connectivity", t.internetOk == null ? "\u2014" : (t.internetOk ? "Online" : "Offline"), "", t.internetOk == null ? null : t.internetOk, "Log fault", "internet")}
+      ${gauge("Fuel balance", t.fuelBalance == null ? "\u2014" : fmtR(t.fuelBalance), "", t.fuelBalance == null ? null : t.fuelBalance >= T.fuelBalance, "Request fuel", "fuel")}
+      ${gauge("Data balance", t.dataGb == null ? "\u2014" : t.dataGb + " GB", "", t.dataGb == null ? null : t.dataGb >= T.dataGb, "Request data", "data")}
+    </div>
+    <div class="section-label">Discipline equipment</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+      ${["health", "vision", "audiology", "dental"].map((k) => `<div style="flex:1 1 130px; background:${eq[k] === false ? "var(--red-bg)" : "var(--light)"}; border-radius:10px; padding:8px 12px;">
+        <div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.2px;">${k}</div>
+        <div style="font-weight:700; color:${eq[k] === false ? "var(--red)" : eq[k] ? "var(--green)" : "var(--gray)"};">${eq[k] == null ? "awaiting feed" : eq[k] ? "Online" : "Offline"}</div>
+      </div>`).join("")}
+    </div>
+    ${warns.length ? warns.map((x) => `<div style="display:flex; gap:9px; padding:8px 12px; border-radius:9px; margin-bottom:6px; font-size:11px; background:var(--amber-bg); color:#8A6015;">
+      <span style="font-weight:700;">\u26a0</span><span>${x.text}</span></div>`).join("")
+      : `<div style="padding:10px 12px; border-radius:9px; background:var(--mint-bg); color:#1173B8; font-size:11px;">No exceptions on this mobile.</div>`}
+    <div class="section-label" style="margin-top:16px;">Manual readings <span style="text-transform:none; letter-spacing:0; font-weight:400;">(until the telemetry feed is live)</span></div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; font-size:11px;" data-tel="${fleet}">
+      <label>Solar % <input type="number" class="tel-f" data-k="solarPct" value="${t.solarPct ?? ""}" style="width:70px;"></label>
+      <label>Fuel balance R <input type="number" class="tel-f" data-k="fuelBalance" value="${t.fuelBalance ?? ""}" style="width:90px;"></label>
+      <label>Data GB <input type="number" class="tel-f" data-k="dataGb" value="${t.dataGb ?? ""}" style="width:70px;"></label>
+      <label>Internet <select class="tel-f" data-k="internetOk" style="font-size:11px;"><option value="">\u2014</option><option value="1" ${t.internetOk === true ? "selected" : ""}>Online</option><option value="0" ${t.internetOk === false ? "selected" : ""}>Offline</option></select></label>
+      ${["health", "vision", "audiology", "dental"].map((k) => `<label>${k} <select class="tel-eq" data-k="${k}" style="font-size:11px;"><option value="">\u2014</option><option value="1" ${eq[k] === true ? "selected" : ""}>On</option><option value="0" ${eq[k] === false ? "selected" : ""}>Off</option></select></label>`).join("")}
+    </div>
+  </div>`;
+}
+
+function secMobilePnL(fleet) {
+  const idx = computeRegionMobilePnLIndex();
+  const me = idx.byFleet[fleet];
+  if (!me) return `<div class="card"><h3>P&amp;L \u2014 ${mobileName(fleet)}</h3><div class="hint">This mobile has no trading region, so it does not appear in any regional P&amp;L. Assign a region on the Allocations tab.</div></div>`;
+  const line = (l, f, o) => { o = o || {};
+    return `<tr style="${o.bold ? "font-weight:700; background:var(--light);" : ""}${o.top ? "border-top:2px solid var(--ink);" : ""}">
+      <td style="padding:5px 8px;${o.indent ? "padding-left:20px;" : ""}">${l}</td>
+      <td style="padding:5px 8px; text-align:right;">${me.fy[f] ? (o.plain ? Math.round(me.fy[f]).toLocaleString("en-ZA") : fmtK(o.neg ? -me.fy[f] : me.fy[f])) : "\u2014"}</td></tr>`; };
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)} \u00b7 ${me.solLabel}</div><h3>P&amp;L \u2014 full year</h3>
+    <div class="hint" style="margin-bottom:12px;">This mobile as its own profit centre. Regional overhead and Support Office are not pushed down. Figures in R'000. Breakeven ${me.breakeven == null ? "cannot be reached at this margin" : `is <b>${Math.round(me.breakeven).toLocaleString("en-ZA")} assessments a month</b>`}.</div>
+    <table style="width:100%; border-collapse:collapse; font-size:11px; max-width:560px;">
+      <tbody>
+        ${line("Assessments", "assessments", { plain: true })}
+        ${line("Revenue \u2014 service delivery", "revenue")}
+        ${line("Other income", "otherIncome")}
+        ${line("Variable cost", "variableCost", { neg: true, indent: true })}
+        ${line("Crew", "salaries", { neg: true, indent: true })}
+        ${line("LOA / subsistence", "loa", { neg: true, indent: true })}
+        ${line("Rentals", "rentals", { neg: true, indent: true })}
+        ${line("Fuel", "fuel", { neg: true, indent: true })}
+        ${line("Other fixed", "otherFixed", { neg: true, indent: true })}
+        ${line("Net profit / (loss)", "netProfit", { bold: true, top: true })}
+      </tbody></table>
+    <div class="section-label" style="margin-top:16px;">Net profit by month</div>
+    <table style="border-collapse:collapse; font-size:11px;">
+      <thead><tr style="background:var(--ink); color:#fff;">${FY_MONTH_LABELS.map((l) => `<td style="padding:4px 7px; text-align:right;">${l.split(" ")[0]}</td>`).join("")}</tr></thead>
+      <tbody><tr>${me.monthly.netProfit.map((v) => `<td style="padding:4px 7px; text-align:right; color:${v < 0 ? "var(--red)" : "inherit"};">${v ? fmtK(v) : "\u2014"}</td>`).join("")}</tr></tbody>
+    </table>
+  </div>`;
+}
+
+function secMobileWorkCap(fleet) {
+  const w = mobileWorkingCapital(fleet);
+  const st = (sharedState.stock && sharedState.stock.byMobile) ? sharedState.stock.byMobile[mobileName(fleet)] : null;
+  const ageRow = (label, arr, total) => `<tr><td style="padding:5px 8px; font-weight:500;">${label}</td>
+    ${arr.map((v) => `<td style="padding:5px 8px; text-align:right;">${v ? fmtK(v) : "\u2014"}</td>`).join("")}
+    <td style="padding:5px 8px; text-align:right; font-weight:700; background:var(--mint-bg);">${fmtK(total)}</td></tr>`;
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)}</div><h3>Working Capital</h3>
+    <div class="hint" style="margin-bottom:12px;">Debtors and creditors are held at entity level, so this is the mobile's share taken on its share of revenue and variable cost, aged on the model's ${sharedState.cashCalendar.receiptDays}-day debtor and ${sharedState.cashCalendar.creditorDays}-day creditor terms. <b>The ageing profile is indicative</b> \u2014 an actual aged analysis needs the debtors and creditors ledgers by mobile, which is a source-system feed. Figures in R'000.</div>
+    <table style="width:100%; border-collapse:collapse; font-size:11px; max-width:760px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;"></td>
+        <td style="padding:5px 8px; text-align:right;">Current</td><td style="padding:5px 8px; text-align:right;">30 days</td>
+        <td style="padding:5px 8px; text-align:right;">60 days</td><td style="padding:5px 8px; text-align:right;">90+ days</td>
+        <td style="padding:5px 8px; text-align:right;">Total</td></tr></thead>
+      <tbody>
+        ${ageRow("Debtors", w.debtorAge, w.debtors)}
+        ${ageRow("Creditors", w.creditorAge, w.creditors)}
+      </tbody></table>
+    <div class="section-label" style="margin-top:16px;">Stock</div>
+    <div style="font-size:11px; color:var(--gray);">${st ? `Held on this mobile per the stock register.` : `No stock held against this mobile in the stock register. Stock ageing by mobile is maintained on the Stock tab.`}</div>
+    <div style="margin-top:10px; font-size:10.5px; color:var(--gray);">Share of group revenue ${(w.shareRev * 100).toFixed(1)}% \u00b7 share of variable cost ${(w.shareVar * 100).toFixed(1)}%</div>
+  </div>`;
+}
+
+function secMobileCashflow(fleet) {
+  const cf = mobileCashflow(fleet);
+  const active = cf.rows.filter((r) => r.items.length);
+  const rows = active.slice(0, 45).map((r) => `<tr style="${r.closing < 0 ? "background:var(--amber-bg);" : ""}">
+    <td style="padding:4px 8px; white-space:nowrap;">${cfFmtDay(r.date)}</td>
+    <td style="padding:4px 8px; text-align:right; color:var(--green);">${r.in ? fmtK(r.in) : "\u2014"}</td>
+    <td style="padding:4px 8px; text-align:right; color:var(--red);">${r.out ? fmtK(r.out) : "\u2014"}</td>
+    <td style="padding:4px 8px; text-align:right; font-weight:700;">${fmtK(r.net)}</td>
+    <td style="padding:4px 8px; text-align:right; font-weight:700; background:var(--mint-bg);">${fmtK(r.closing)}</td>
+    <td style="padding:4px 8px; font-size:9.5px; color:var(--gray);">${r.items.map((i) => i.label).join(" \u00b7 ")}</td></tr>`).join("");
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)}</div><h3>Cashflow \u2014 next ${sharedState.cashCalendar.horizonDays} days</h3>
+    <div class="hint" style="margin-bottom:12px;">This mobile's share of group cash movements, plus any payments approved against it. Approvals become committed cash on their payment date \u2014 see Payment Approvals. Figures in R'000.</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+      <div style="flex:1 1 150px; background:var(--light); border-radius:10px; padding:10px 12px;"><div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.4px;">Receipts</div><div style="font-family:var(--font-head); font-size:20px; font-weight:700;">${fmtR(cf.totalIn)}</div></div>
+      <div style="flex:1 1 150px; background:var(--light); border-radius:10px; padding:10px 12px;"><div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.4px;">Payments</div><div style="font-family:var(--font-head); font-size:20px; font-weight:700;">${fmtR(cf.totalOut)}</div></div>
+      <div style="flex:1 1 150px; background:${cf.closing < 0 ? "var(--amber-bg)" : "var(--light)"}; border-radius:10px; padding:10px 12px;"><div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.4px;">Net movement</div><div style="font-family:var(--font-head); font-size:20px; font-weight:700; color:${cf.closing < 0 ? "#8A6015" : "var(--ink)"};">${fmtR(cf.closing)}</div></div>
+      <div style="flex:1 1 150px; background:var(--light); border-radius:10px; padding:10px 12px;"><div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.4px;">Committed approvals</div><div style="font-family:var(--font-head); font-size:20px; font-weight:700;">${fmtR(cf.approvals.reduce((a, x) => a + Number(x.amount || 0), 0))}</div></div>
+    </div>
+    <div style="overflow-x:auto; max-height:460px; overflow-y:auto;"><table style="width:100%; border-collapse:collapse; font-size:10.5px;">
+      <thead><tr style="background:var(--ink); color:#fff; position:sticky; top:0;"><td style="padding:5px 8px;">Date</td>
+        <td style="padding:5px 8px; text-align:right;">In</td><td style="padding:5px 8px; text-align:right;">Out</td>
+        <td style="padding:5px 8px; text-align:right;">Net</td><td style="padding:5px 8px; text-align:right;">Cumulative</td>
+        <td style="padding:5px 8px;">Detail</td></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6" style="padding:10px; color:var(--gray);">No cash movements attributed to this mobile.</td></tr>`}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function secMobileOps(fleet) {
+  const o = mobileOpsRow(fleet);
+  const idx = computeRegionMobilePnLIndex().byFleet[fleet];
+  const be = idx ? idx.breakeven : null;
+  const card = (l, v, sub, bad) => `<div style="flex:1 1 155px; background:${bad ? "var(--amber-bg)" : "var(--light)"}; border-radius:10px; padding:10px 12px;">
+    <div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">${l}</div>
+    <div style="font-family:var(--font-head); font-size:20px; font-weight:700; color:${bad ? "#8A6015" : "var(--ink)"};">${v}</div>
+    <div style="font-size:10.5px; color:var(--gray);">${sub}</div></div>`;
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)}</div><h3>Operational Tracking</h3>
+    <div class="hint" style="margin-bottom:12px;">Live operational performance. These come from the operations database; enter them by hand below until that feed is connected.</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      ${card("Assessments today", fmtOr(o.assessmentsToday), "")}
+      ${card("Month to date", fmtOr(o.monthToDate), be ? `breakeven ${Math.round(be).toLocaleString("en-ZA")}/month` : "", o.monthToDate != null && be != null && o.monthToDate < be)}
+      ${card("Per operational day", fmtOr(o.perDay ? Math.round(o.perDay) : null), `${o.operationalDays || "\u2014"} days`)}
+      ${card("Hours utilisation", o.util == null ? fmtOr(null) : Math.round(o.util * 100) + "%", `${fmtOr(o.actualHours, "h", "\u2014")} of ${fmtOr(o.scheduledHours, "h", "\u2014")}`, o.util != null && o.util < 0.8)}
+      ${card("Client satisfaction", o.satisfaction == null ? fmtOr(null) : o.satisfaction.toFixed(1) + " / 5", "", o.satisfaction != null && o.satisfaction < sharedState.opsThresholds.satisfaction)}
+      ${card("Patient journey", fmtOr(o.journeyMinutes, " min"), "average end to end")}
+    </div>
+    <div class="section-label">Manual entry <span style="text-transform:none; letter-spacing:0; font-weight:400;">(until the operations feed is live)</span></div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; font-size:11px;" data-ops="${fleet}">
+      ${[["assessmentsToday", "Today"], ["monthToDate", "Month to date"], ["operationalDays", "Op. days"],
+         ["scheduledHours", "Scheduled hrs"], ["actualHours", "Actual hrs"], ["satisfaction", "Satisfaction /5"],
+         ["journeyMinutes", "Journey min"]].map(([k, l]) =>
+        `<label>${l} <input type="number" step="0.1" class="ops-f" data-k="${k}" value="${o[k] ?? ""}" style="width:80px;"></label>`).join("")}
+    </div>
+  </div>`;
+}
+
+function secMobileSchedule(fleet) {
+  const deps = orderDeployments().filter((d) => d.assigned.includes(fleet));
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)}</div><h3>Schedule</h3>
+    <div class="hint" style="margin-bottom:12px;">Committed deployments for this mobile. Allocation is done on Upcoming Orders.</div>
+    ${scheduleTable(deps, "This mobile has no committed deployments.")}
+  </div>`;
+}
+
+function secMobileStaffEarnings(fleet) {
+  const p = mobilesState.payroll;
+  const crew = (p.staff || []).filter((st) => st.fleet === fleet && payrollRoleFor(st.title) !== "Other / Head Office");
+  const rate = Number((sharedState.crewCharge || {}).ratePerAssessment || 0);
+  const o = mobileOpsRow(fleet);
+  const idx = computeRegionMobilePnLIndex().byFleet[fleet];
+  const monthlyAssess = o.monthToDate != null ? o.monthToDate : (idx ? idx.fy.assessments / 12 : 0);
+  const rows = crew.map((st) => {
+    const basic = Number(st.salary || 0);
+    const earned = rate * monthlyAssess;
+    const incentive = Math.max(0, earned - basic);
+    return `<tr><td style="padding:5px 8px; font-weight:500;">${st.name}</td>
+      <td style="padding:5px 8px; font-size:10.5px;">${st.title}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtR(basic)}</td>
+      <td style="padding:5px 8px; text-align:right;">${fmtR(earned)}</td>
+      <td style="padding:5px 8px; text-align:right; font-weight:700; color:${incentive > 0 ? "var(--green)" : "var(--gray)"};">${incentive > 0 ? fmtR(incentive) : "\u2014"}</td>
+      <td style="padding:5px 8px; text-align:right; font-weight:700;">${fmtR(Math.max(basic, earned))}</td></tr>`;
+  }).join("");
+  const tot = crew.reduce((a, st) => a + Math.max(Number(st.salary || 0), rate * monthlyAssess), 0);
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)}</div><h3>Staff Earnings</h3>
+    <div class="hint" style="margin-bottom:12px;">Each crew member earns ${fmtR(rate)} per assessment, floored at their basic \u2014 the incentive only pays once assessments have covered the salary. Based on <b>${Math.round(monthlyAssess).toLocaleString("en-ZA")} assessments</b> ${o.monthToDate != null ? "month to date" : "a month (model average \u2014 enter month-to-date on Operational Tracking for actuals)"}. <b>Signed off by the Region.</b></div>
+    <table style="width:100%; border-collapse:collapse; font-size:11px; max-width:820px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Crew member</td>
+        <td style="padding:5px 8px;">Role</td><td style="padding:5px 8px; text-align:right;">Basic</td>
+        <td style="padding:5px 8px; text-align:right;">Incentive earned</td><td style="padding:5px 8px; text-align:right;">Above basic</td>
+        <td style="padding:5px 8px; text-align:right;">Total pay</td></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6" style="padding:10px; color:var(--gray);">No crew assigned. Assign on the Allocations tab.</td></tr>`}</tbody>
+      <tfoot><tr style="background:var(--teal); color:#fff; font-weight:700;"><td colspan="5" style="padding:5px 8px;">TOTAL CREW COST / MONTH</td>
+        <td style="padding:5px 8px; text-align:right;">${fmtR(tot)}</td></tr></tfoot>
+    </table>
+  </div>`;
+}
+
+function secMobileApprovals(fleet) {
+  const list = (mobilesState.approvals || []).filter((a) => a.fleet === fleet);
+  const rows = list.map((a) => {
+    const variance = Number(a.budget || 0) - Number(a.amount || 0);
+    return `<tr data-appr="${a.id}" style="${variance < 0 ? "background:var(--amber-bg);" : ""}">
+      <td style="padding:4px 6px;"><input type="text" class="ap-f" data-k="description" value="${(a.description || "").replace(/"/g, "&quot;")}" style="width:190px; font-size:11px;"></td>
+      <td style="padding:4px 6px;"><input type="number" class="ap-f" data-k="amount" value="${Number(a.amount || 0)}" style="width:95px; font-size:11px; text-align:right;"></td>
+      <td style="padding:4px 6px;"><input type="number" class="ap-f" data-k="budget" value="${Number(a.budget || 0)}" style="width:95px; font-size:11px; text-align:right;"></td>
+      <td style="padding:4px 6px; text-align:right; font-weight:700; color:${variance < 0 ? "var(--red)" : "var(--green)"};">${fmtR(variance)}</td>
+      <td style="padding:4px 6px;"><input type="date" class="ap-f" data-k="date" value="${a.date || ""}" style="font-size:10.5px;"></td>
+      <td style="padding:4px 6px;"><select class="ap-f" data-k="status" style="font-size:11px;">${["Requested", "Approved", "Rejected"].map((x) => `<option ${a.status === x ? "selected" : ""}>${x}</option>`).join("")}</select></td>
+      <td style="padding:4px 6px; text-align:center;"><button class="ap-del" data-del="${a.id}" style="border:none;background:none;color:var(--red);font-size:15px;font-weight:700;cursor:pointer;">\u00d7</button></td></tr>`;
+  }).join("");
+  const approved = list.filter((a) => a.status === "Approved");
+  const over = list.filter((a) => Number(a.amount || 0) > Number(a.budget || 0));
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)}</div><h3>Payment Approvals versus Budget</h3>
+    <div class="hint" style="margin-bottom:10px;">Payments requested against this mobile, each compared to its budget. Setting a payment to <b>Approved</b> commits it to the mobile's cashflow on its payment date. ${over.length ? `<b style="color:var(--red);">${over.length} over budget.</b>` : ""} ${approved.length} approved, ${fmtR(approved.reduce((a, x) => a + Number(x.amount || 0), 0))} committed.</div>
+    <table style="border-collapse:collapse; font-size:11px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 6px;">Item</td>
+        <td style="padding:5px 6px; text-align:right;">Amount</td><td style="padding:5px 6px; text-align:right;">Budget</td>
+        <td style="padding:5px 6px; text-align:right;">Variance</td><td style="padding:5px 6px;">Payment date</td>
+        <td style="padding:5px 6px;">Status</td><td style="padding:5px 6px; text-align:center;">Remove</td></tr></thead>
+      <tbody>${rows || `<tr><td colspan="7" style="padding:8px; color:var(--gray);">No payment requests.</td></tr>`}</tbody>
+    </table>
+    <button class="btn ap-add" data-fleet="${fleet}" style="margin-top:10px; background:var(--teal) !important; color:#fff !important; border-color:var(--teal) !important;">+ Request payment</button>
+  </div>`;
+}
+
+/* Performance score out of 100. Three weighted components, each measured
+   against what the model already expects of a mobile:
+     throughput   assessments a day against the per-day rate for the solution
+     utilisation  actual hours worked against hours scheduled
+     satisfaction client rating out of five
+   Where the operations feed has not delivered a component it is dropped and
+   the remaining weights are rescaled, so a partial feed gives a fair score
+   rather than a misleadingly low one. Per-person figures override the
+   mobile-level ones as soon as they are available. */
+function staffScore(fleet, staffId) {
+  const o = mobileOpsRow(fleet);
+  const rec = mobileRec(fleet);
+  const bucket = payrollBucketOf(rec.vehicleType);
+  const target = Number((sharedState.orderSchedule.assessmentsPerDay || {})[bucket] || 0);
+  const per = ((mobilesState.opsMetrics[fleet] || {}).staff || {})[staffId] || {};
+
+  const comps = [
+    { key: "throughput", label: "Throughput", weight: 40,
+      raw: per.perDay != null ? per.perDay : o.perDay,
+      pct: null, detail: target ? `vs ${target}/day target` : "no target set",
+      scale: (v) => (target > 0 ? Math.min(1, v / target) : null),
+      fmt: (v) => `${Math.round(v)}/day`, own: per.perDay != null },
+    { key: "utilisation", label: "Hours utilisation", weight: 30,
+      raw: per.util != null ? per.util : o.util,
+      pct: null, detail: "actual against scheduled",
+      scale: (v) => Math.min(1, v), fmt: (v) => `${Math.round(v * 100)}%`, own: per.util != null },
+    { key: "satisfaction", label: "Client satisfaction", weight: 30,
+      raw: per.satisfaction != null ? per.satisfaction : o.satisfaction,
+      pct: null, detail: "out of 5", scale: (v) => Math.min(1, v / 5),
+      fmt: (v) => v.toFixed(1), own: per.satisfaction != null },
+  ];
+  let weightAvailable = 0, weighted = 0;
+  const missing = [];
+  comps.forEach((c) => {
+    if (c.raw == null) { missing.push(c.label); return; }
+    const sc = c.scale(c.raw);
+    if (sc == null) { missing.push(c.label); return; }
+    c.pct = sc;
+    weightAvailable += c.weight;
+    weighted += sc * c.weight;
+  });
+  const score = weightAvailable > 0 ? Math.round((weighted / weightAvailable) * 100) : null;
+  return { score, comps, missing, coverage: weightAvailable };
+}
+
+function scoreBadge(score) {
+  if (score == null) return `<span style="display:inline-block; padding:3px 10px; border-radius:20px; font-size:10.5px; font-weight:700; background:var(--light); color:var(--gray);">awaiting feed</span>`;
+  const bg = score >= 80 ? "var(--mint-bg)" : score >= 60 ? "var(--amber-bg)" : "var(--red-bg)";
+  const fg = score >= 80 ? "#1173B8" : score >= 60 ? "#8A6015" : "var(--red)";
+  return `<span style="display:inline-block; min-width:44px; text-align:center; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:700; background:${bg}; color:${fg};">${score}</span>`;
+}
+
+function secMobileStaffing(fleet) {
+  const rec = mobileRec(fleet);
+  const meta = payrollVehicleTypeMeta(rec.vehicleType);
+  const roles = meta ? meta.requiredRoles : [];
+  const pr = computePayroll();
+  const g = (pr.grid || {})[fleet] || {};
+  const crew = (mobilesState.payroll.staff || []).filter((st) => st.fleet === fleet);
+  const o = mobileOpsRow(fleet);
+  const rate = Number((sharedState.crewCharge || {}).ratePerAssessment || 0);
+  const idx = computeRegionMobilePnLIndex().byFleet[fleet];
+  const monthlyAssess = o.monthToDate != null ? o.monthToDate : (idx ? idx.fy.assessments / 12 : 0);
+  const earned = rate * monthlyAssess;
+
+  // One row per position the vehicle type requires, plus anyone else assigned.
+  const seen = new Set();
+  const positions = roles.map((r) => {
+    const holder = crew.find((st) => payrollRoleFor(st.title) === r && !seen.has(st.id));
+    if (holder) seen.add(holder.id);
+    return { role: r, holder, required: true, filled: (g[r] || 0) > 0 };
+  }).concat(crew.filter((st) => !seen.has(st.id))
+    .map((st) => ({ role: payrollRoleFor(st.title) || st.title, holder: st, required: false, filled: true })));
+
+  const rows = positions.map((pos) => {
+    const st = pos.holder;
+    const sc = st ? staffScore(fleet, st.id) : null;
+    const basic = st ? Number(st.salary || 0) : 0;
+    const incentive = st ? Math.max(0, earned - basic) : 0;
+    const total = st ? Math.max(basic, earned) : 0;
+    return `<tr style="${!st ? "background:var(--amber-bg);" : ""}">
+      <td style="padding:5px 8px; font-weight:500;">${pos.role}${pos.required ? "" : ` <span style="font-size:9px; color:var(--gray);">additional</span>`}</td>
+      <td style="padding:5px 8px;">${st ? st.name : `<span style="color:var(--red); font-weight:700;">vacant</span>`}</td>
+      <td style="padding:5px 8px; text-align:center;">${st ? scoreBadge(sc.score) : "\u2014"}</td>
+      <td style="padding:5px 8px; font-size:9.5px; color:var(--gray);">${st ? (sc.comps.filter((c) => c.pct != null).map((c) => `${c.label.split(" ")[0]} ${Math.round(c.pct * 100)}%`).join(" \u00b7 ") || "no metrics yet") : ""}</td>
+      <td style="padding:5px 8px; text-align:right;">${st ? fmtR(basic) : "\u2014"}</td>
+      <td style="padding:5px 8px; text-align:right;">${st ? fmtR(earned) : "\u2014"}</td>
+      <td style="padding:5px 8px; text-align:right; font-weight:700; color:${incentive > 0 ? "var(--green)" : "var(--gray)"};">${incentive > 0 ? fmtR(incentive) : "\u2014"}</td>
+      <td style="padding:5px 8px; text-align:right; font-weight:700;">${st ? fmtR(total) : "\u2014"}</td></tr>`;
+  }).join("");
+
+  const totalPay = crew.reduce((a, st) => a + Math.max(Number(st.salary || 0), earned), 0);
+  const scores = crew.map((st) => staffScore(fleet, st.id).score).filter((x) => x != null);
+  const avg = scores.length ? Math.round(scores.reduce((a, v) => a + v, 0) / scores.length) : null;
+  const vacancies = positions.filter((x) => x.required && !x.holder).length;
+
+  // Per-person metric overrides, so the score stops being mobile-wide as soon
+  // as individual figures are available.
+  const overrides = crew.map((st) => {
+    const per = ((mobilesState.opsMetrics[fleet] || {}).staff || {})[st.id] || {};
+    return `<tr data-sov="${st.id}" data-fleet="${fleet}">
+      <td style="padding:4px 6px; font-size:10.5px;">${st.name}</td>
+      <td style="padding:4px 6px;"><input type="number" step="0.1" class="sov-f" data-k="perDay" value="${per.perDay ?? ""}" placeholder="mobile" style="width:70px; font-size:10.5px; text-align:right;"></td>
+      <td style="padding:4px 6px;"><input type="number" step="0.01" max="1" class="sov-f" data-k="util" value="${per.util ?? ""}" placeholder="mobile" style="width:70px; font-size:10.5px; text-align:right;"></td>
+      <td style="padding:4px 6px;"><input type="number" step="0.1" max="5" class="sov-f" data-k="satisfaction" value="${per.satisfaction ?? ""}" placeholder="mobile" style="width:70px; font-size:10.5px; text-align:right;"></td></tr>`;
+  }).join("");
+
+  return `<div class="card">
+    <div class="eyebrow">${mobileName(fleet)} \u00b7 ${meta ? meta.label : "untyped"}</div><h3>Staffing &amp; Earnings</h3>
+    <div class="hint" style="margin-bottom:12px;">Every position this vehicle type requires, who holds it, how they are performing and what they earn. Vacancies are amber \u2014 an incomplete crew blocks the mobile from being scheduled. Earnings are based on <b>${Math.round(monthlyAssess).toLocaleString("en-ZA")} assessments</b> ${o.monthToDate != null ? "month to date" : "a month (model average \u2014 enter month-to-date on Operational Tracking for actuals)"}, at ${fmtR(rate)} per assessment floored at basic. <b>Signed off by the Region.</b></div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <div style="flex:1 1 150px; background:${avg != null && avg < 60 ? "var(--amber-bg)" : "var(--light)"}; border-radius:10px; padding:10px 12px;">
+        <div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.4px;">Crew score</div>
+        <div style="font-family:var(--font-head); font-size:22px; font-weight:700;">${avg == null ? "\u2014" : avg + " / 100"}</div>
+        <div style="font-size:10.5px; color:var(--gray);">average across the crew</div></div>
+      <div style="flex:1 1 150px; background:${vacancies ? "var(--amber-bg)" : "var(--light)"}; border-radius:10px; padding:10px 12px;">
+        <div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.4px;">Positions filled</div>
+        <div style="font-family:var(--font-head); font-size:22px; font-weight:700;">${roles.length - vacancies} / ${roles.length}</div>
+        <div style="font-size:10.5px; color:var(--gray);">${vacancies ? `${vacancies} vacant` : "fully crewed"}</div></div>
+      <div style="flex:1 1 150px; background:var(--light); border-radius:10px; padding:10px 12px;">
+        <div style="font-size:10px; color:var(--gray); text-transform:uppercase; letter-spacing:1.4px;">Crew cost / month</div>
+        <div style="font-family:var(--font-head); font-size:22px; font-weight:700;">${fmtR(totalPay)}</div>
+        <div style="font-size:10.5px; color:var(--gray);">basic and incentive</div></div>
+    </div>
+    <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px; min-width:920px;">
+      <thead><tr style="background:var(--ink); color:#fff;">
+        <td style="padding:5px 8px;">Position required</td><td style="padding:5px 8px;">Held by</td>
+        <td style="padding:5px 8px; text-align:center;">Score</td><td style="padding:5px 8px;">Components</td>
+        <td style="padding:5px 8px; text-align:right;">Basic</td><td style="padding:5px 8px; text-align:right;">Incentive earned</td>
+        <td style="padding:5px 8px; text-align:right;">Above basic</td><td style="padding:5px 8px; text-align:right;">Total pay</td></tr></thead>
+      <tbody>${rows || `<tr><td colspan="8" style="padding:10px; color:var(--gray);">No vehicle type set \u2014 set it on Operational Readiness.</td></tr>`}</tbody>
+      <tfoot><tr style="background:var(--teal); color:#fff; font-weight:700;"><td colspan="7" style="padding:5px 8px;">TOTAL CREW COST / MONTH</td>
+        <td style="padding:5px 8px; text-align:right;">${fmtR(totalPay)}</td></tr></tfoot>
+    </table></div>
+    <div style="font-size:10.5px; color:var(--gray); margin-top:8px;">Score is throughput 40, hours utilisation 30, client satisfaction 30. Components with no data are dropped and the rest rescaled, so a partial feed does not read as poor performance.</div>
+    ${crew.length ? `<div class="section-label" style="margin-top:16px;">Per-person metrics <span style="text-transform:none; letter-spacing:0; font-weight:400;">(leave blank to use the mobile's figures)</span></div>
+    <table style="border-collapse:collapse; font-size:11px;">
+      <thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 6px;">Crew member</td>
+        <td style="padding:5px 6px; text-align:right;">Assess./day</td><td style="padding:5px 6px; text-align:right;">Utilisation 0\u20131</td>
+        <td style="padding:5px 6px; text-align:right;">Satisfaction /5</td></tr></thead>
+      <tbody>${overrides}</tbody></table>` : ""}
+  </div>`;
+}
+
+
 function renderRegionEarningsCard(rk) {
   const E = sharedState.rmEarnings;
   const e = computeRegionEarnings(rk);
@@ -8815,8 +9627,146 @@ function renderRegionEarningsCard(rk) {
       </tbody>
     </table>
     </div>
-    <footer class="source-note">Delivery earnings follow the vehicle allocation \u2014 a mobile from this region working elsewhere still earns for this region, which is the same basis the regional P&amp;L uses. SIOC mobiles are excluded from the per-assessment rate by design. Sales commission is attributed from the salesperson recorded against each contract on the Sales Pipeline tab, and only accrues in the months the work is actually delivered.</footer>
+    <footer class="source-note">Delivery earnings follow the vehicle allocation \u2014 a mobile from this region working elsewhere still earns for this region, which is the same basis the regional P&amp;L uses. SIOC mobiles are excluded from the per-assessment rate by design. Sales commission is attributed from the sales agent recorded against each contract on the Sales Pipeline tab, and only accrues in the months the work is actually delivered.</footer>
   </div>`;
+}
+
+/* ---- the drill-down shell ---- */
+function renderRegionDrilldown(rk) {
+  const mobs = regionMobiles(rk);
+  const sub = subKey(rk);
+  const sec = sectionKey(rk);
+  const sections = sub === "region" ? REGION_SECTIONS : MOBILE_SECTIONS;
+  const exCount = (f) => mobileExceptions(f).filter((x) => x.level === "warn").length;
+  const regionEx = regionExceptions(rk).filter((x) => x.level === "warn").length;
+
+  const chip = (active, label, badge, attrs) => `<div class="drill-chip" ${attrs} style="flex:0 0 auto; padding:8px 14px; border-radius:20px; font-size:11.5px; font-weight:${active ? 700 : 500}; letter-spacing:.4px; cursor:pointer; white-space:nowrap;
+    background:${active ? "var(--ink)" : "#fff"}; color:${active ? "#fff" : "var(--gray)"}; border:1px solid ${active ? "var(--ink)" : "var(--line)"};">${label}${badge ? ` <span style="display:inline-block; min-width:16px; padding:0 5px; border-radius:20px; background:${active ? "var(--amber)" : "var(--amber-bg)"}; color:${active ? "#3A2A08" : "#8A6015"}; font-size:9.5px; font-weight:700;">${badge}</span>` : ""}</div>`;
+
+  const lvl2 = `<div style="display:flex; gap:7px; flex-wrap:wrap; margin-bottom:10px;">
+    ${chip(sub === "region", mobilesState.regions[rk].name + " \u2014 Region", regionEx, `data-sub="region" data-rk="${rk}"`)}
+    ${mobs.map((m) => chip(sub === m.fleet, m.name, exCount(m.fleet), `data-sub="${m.fleet}" data-rk="${rk}"`)).join("")}
+    ${mobs.length ? "" : `<span style="font-size:11px; color:var(--gray); padding:8px 4px;">No mobiles allocated to this region yet.</span>`}
+  </div>`;
+
+  const lvl3 = `<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid var(--line);">
+    ${sections.map((x) => `<div class="drill-sec" data-sec="${x.key}" data-rk="${rk}" style="flex:0 0 auto; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:${sec === x.key ? 700 : 500}; letter-spacing:.5px; text-transform:uppercase; cursor:pointer;
+      background:${sec === x.key ? "var(--teal)" : "transparent"}; color:${sec === x.key ? "#fff" : "var(--gray)"};">${x.label}</div>`).join("")}
+  </div>`;
+
+  let body = "";
+  if (sub === "region") {
+    if (sec === "landing") body = secRegionLanding(rk);
+    else if (sec === "pnl") body = renderRegionOutput(rk) + renderRegionMobilePnLCard(rk);
+    else if (sec === "ops") body = secRegionOps(rk);
+    else if (sec === "earnings") body = renderRegionEarningsCard(rk);
+    else if (sec === "pipeline") body = secRegionPipeline(rk);
+    else if (sec === "schedule") body = secRegionSchedule(rk);
+    else if (sec === "tasks") body = tasksCard("region", rk, `Tasks Outstanding \u2014 ${mobilesState.regions[rk].name}`,
+      "Tickets and approvals sitting with this region, its staff, or an ecosystem business serving it.");
+  } else {
+    const f = sub;
+    if (sec === "landing") body = secMobileLanding(f);
+    else if (sec === "pnl") body = secMobilePnL(f);
+    else if (sec === "workcap") body = secMobileWorkCap(f);
+    else if (sec === "cashflow") body = secMobileCashflow(f);
+    else if (sec === "ops") body = secMobileOps(f);
+    else if (sec === "schedule") body = secMobileSchedule(f);
+    else if (sec === "approvals") body = secMobileApprovals(f);
+    else if (sec === "staffing") body = secMobileStaffing(f);
+    else if (sec === "tasks") body = tasksCard("mobile", f, `Tasks Outstanding \u2014 ${mobileName(f)}`,
+      "Tickets and approvals sitting against this mobile.");
+  }
+  return lvl2 + lvl3 + body;
+}
+
+function bindRegionDrilldown() {
+  document.querySelectorAll(".drill-chip").forEach((el) => el.addEventListener("click", () => {
+    regionSub[el.dataset.rk] = el.dataset.sub;
+    renderDashboard(); window.scrollTo({ top: 0 });
+  }));
+  document.querySelectorAll(".drill-sec").forEach((el) => el.addEventListener("click", () => {
+    regionSection[`${el.dataset.rk}|${subKey(el.dataset.rk)}`] = el.dataset.sec;
+    renderDashboard(); window.scrollTo({ top: 0 });
+  }));
+  // telemetry / ops manual entry
+  const telHost = document.querySelector("[data-tel]");
+  if (telHost) {
+    const f = telHost.dataset.tel;
+    const t = mobilesState.telemetry[f];
+    telHost.querySelectorAll(".tel-f").forEach((i) => i.addEventListener("change", (e) => {
+      const k = e.target.dataset.k, v = e.target.value;
+      t[k] = v === "" ? null : (k === "internetOk" ? v === "1" : Number(v));
+      renderDashboard();
+    }));
+    telHost.querySelectorAll(".tel-eq").forEach((i) => i.addEventListener("change", (e) => {
+      const v = e.target.value;
+      t.equipment[e.target.dataset.k] = v === "" ? null : v === "1";
+      renderDashboard();
+    }));
+  }
+  // per-person metric overrides
+  document.querySelectorAll("tr[data-sov]").forEach((tr) => {
+    const f = tr.dataset.fleet, id = Number(tr.dataset.sov);
+    const om = mobilesState.opsMetrics[f];
+    if (!om) return;
+    if (!om.staff) om.staff = {};
+    tr.querySelectorAll(".sov-f").forEach((i) => i.addEventListener("change", (e) => {
+      if (!om.staff[id]) om.staff[id] = {};
+      const v = e.target.value;
+      om.staff[id][e.target.dataset.k] = v === "" ? null : Number(v);
+      renderDashboard();
+    }));
+  });
+
+  const opsHost = document.querySelector("[data-ops]");
+  if (opsHost) {
+    const o = mobilesState.opsMetrics[opsHost.dataset.ops];
+    opsHost.querySelectorAll(".ops-f").forEach((i) => i.addEventListener("change", (e) => {
+      const v = e.target.value;
+      o[e.target.dataset.k] = v === "" ? null : Number(v);
+      renderDashboard();
+    }));
+  }
+  // top-up requests become tasks, so the request is tracked rather than lost
+  document.querySelectorAll(".top-up").forEach((b) => b.addEventListener("click", (e) => {
+    const f = e.target.dataset.fleet, item = e.target.dataset.item;
+    mobilesState.tasks.push({ id: nextId(), scope: "mobile", ref: f,
+      title: `Top-up requested: ${item} \u2014 ${mobileName(f)}`, owner: "", due: cfISO(cfAddDays(cfToday(), 2)), status: "Open" });
+    renderDashboard();
+  }));
+  // tasks
+  document.querySelectorAll("tr[data-task]").forEach((tr) => {
+    const t = (mobilesState.tasks || []).find((x) => x.id === Number(tr.dataset.task));
+    if (!t) return;
+    tr.querySelectorAll(".tk-f").forEach((i) => i.addEventListener("change", (e) => { t[e.target.dataset.k] = e.target.value; renderDashboard(); }));
+  });
+  document.querySelectorAll(".tk-del").forEach((b) => b.addEventListener("click", (e) => {
+    mobilesState.tasks = mobilesState.tasks.filter((x) => x.id !== Number(e.target.dataset.del)); renderDashboard();
+  }));
+  document.querySelectorAll(".tk-add").forEach((b) => b.addEventListener("click", (e) => {
+    mobilesState.tasks.push({ id: nextId(), scope: e.target.dataset.scope, ref: e.target.dataset.ref,
+      title: "New task", owner: "", due: "", status: "Open" });
+    renderDashboard();
+  }));
+  // approvals
+  document.querySelectorAll("tr[data-appr]").forEach((tr) => {
+    const a = (mobilesState.approvals || []).find((x) => x.id === Number(tr.dataset.appr));
+    if (!a) return;
+    tr.querySelectorAll(".ap-f").forEach((i) => i.addEventListener("change", (e) => {
+      const k = e.target.dataset.k;
+      a[k] = (k === "amount" || k === "budget") ? Number(e.target.value || 0) : e.target.value;
+      renderDashboard();
+    }));
+  });
+  document.querySelectorAll(".ap-del").forEach((b) => b.addEventListener("click", (e) => {
+    mobilesState.approvals = mobilesState.approvals.filter((x) => x.id !== Number(e.target.dataset.del)); renderDashboard();
+  }));
+  document.querySelectorAll(".ap-add").forEach((b) => b.addEventListener("click", (e) => {
+    mobilesState.approvals.push({ id: nextId(), fleet: e.target.dataset.fleet, description: "New payment request",
+      amount: 0, budget: 0, date: cfISO(cfAddDays(cfToday(), 14)), status: "Requested" });
+    renderDashboard();
+  }));
 }
 
 function renderAllocationsCard() {
@@ -10815,7 +11765,9 @@ function renderDashboard() {
   } else if (outputTab === "check") {
     host.innerHTML = renderReconciliationCheckCard();
   } else {
-    host.innerHTML = renderRegionOutput(outputTab) + renderRegionMobilePnLCard(outputTab) + renderRegionEarningsCard(outputTab);
+    // RM earnings first, then the regional P&L, then each mobile in the region.
+    host.innerHTML = renderRegionDrilldown(outputTab);
+    bindRegionDrilldown();
   }
 }
 
@@ -14841,6 +15793,70 @@ function regionForPlace(place) {
   return best;
 }
 
+function renderSalesAgentsCard() {
+  const E = sharedState.rmEarnings;
+  const agents = sharedState.salesAgents || [];
+  const vols = computeSalesAgentVolume();
+  const regionOpts = (sel) => `<option value="" ${!sel ? "selected" : ""}>\u2014 not an RM \u2014</option>` +
+    tradingRegionKeys().map((rk) => `<option value="${rk}" ${sel === rk ? "selected" : ""}>${mobilesState.regions[rk].name}</option>`).join("");
+
+  const rows = agents.map((a) => {
+    const v = vols[a.id] || [];
+    const sold = v.reduce((x, y) => x + y, 0);
+    const comm = sold * Number(E.salesCommission || 0);
+    const isRM = !!a.regionKey;
+    return `<tr data-agent="${a.id}">
+      <td style="padding:4px 6px;"><input type="text" class="ag-f" data-k="name" value="${(a.name || "").replace(/"/g, "&quot;")}" style="width:150px; font-size:11px;"></td>
+      <td style="padding:4px 6px;"><input type="text" class="ag-f" data-k="role" value="${(a.role || "").replace(/"/g, "&quot;")}" placeholder="role" style="width:140px; font-size:11px;"></td>
+      <td style="padding:4px 6px;"><select class="ag-f" data-k="regionKey" style="font-size:11px;">${regionOpts(a.regionKey)}</select></td>
+      <td style="padding:4px 6px; text-align:right;">${sold ? Math.round(sold).toLocaleString("en-ZA") : "\u2014"}</td>
+      <td style="padding:4px 6px; text-align:right; font-weight:600;">${comm ? fmtR(comm) : "\u2014"}</td>
+      <td style="padding:4px 6px; font-size:10px; color:${isRM ? "var(--teal)" : "var(--gray)"};">${isRM ? `\u2192 ${mobilesState.regions[a.regionKey].name} earnings` : "not routed to a region"}</td>
+      <td style="padding:4px 6px; text-align:center;"><button class="ag-del" data-del="${a.id}" style="border:none;background:none;color:var(--red);font-size:15px;font-weight:700;cursor:pointer;">\u00d7</button></td>
+    </tr>`;
+  }).join("");
+
+  return `
+  <div class="card">
+    <div class="eyebrow">Commercial</div>
+    <h3>Sales Agents</h3>
+    <div class="hint" style="margin-bottom:10px;">Everyone who can be recorded as the salesperson on a contract. Commission is <b>${fmtR(E.salesCommission)} per assessment</b>, earned as the work is delivered rather than when the contract is signed. Link an agent to a region to make them that region's RM \u2014 their commission is then reported on that region's earnings tab. Agents with no region still earn, but the commission is only reported here.</div>
+    <table style="width:100%; border-collapse:collapse; font-size:11px; max-width:1000px;">
+      <thead><tr style="background:var(--ink); color:#fff;">
+        <td style="padding:5px 6px;">Agent</td><td style="padding:5px 6px;">Role</td>
+        <td style="padding:5px 6px;">Region (if RM)</td>
+        <td style="padding:5px 6px; text-align:right;">Assessments sold, FY</td>
+        <td style="padding:5px 6px; text-align:right;">Commission FY</td>
+        <td style="padding:5px 6px;">Routing</td><td style="padding:5px 6px; text-align:center;">Remove</td>
+      </tr></thead>
+      <tbody>${rows || `<tr><td colspan="7" style="padding:8px; color:var(--gray);">No agents yet.</td></tr>`}</tbody>
+    </table>
+    <button class="btn" id="agAdd" style="margin-top:10px; background:var(--teal) !important; color:#fff !important; border-color:var(--teal) !important;">+ Add sales agent</button>
+  </div>`;
+}
+
+function bindSalesAgentEvents() {
+  document.querySelectorAll("tr[data-agent]").forEach((tr) => {
+    const a = (sharedState.salesAgents || []).find((x) => x.id === Number(tr.dataset.agent));
+    if (!a) return;
+    tr.querySelectorAll(".ag-f").forEach((i) => i.addEventListener("change", (e) => {
+      a[e.target.dataset.k] = e.target.value;
+      renderPipeline(); renderDashboard();
+    }));
+  });
+  document.querySelectorAll(".ag-del").forEach((b) => b.addEventListener("click", (e) => {
+    const id = Number(e.target.dataset.del);
+    sharedState.salesAgents = (sharedState.salesAgents || []).filter((x) => x.id !== id);
+    (sharedState.pipeline.lines || []).forEach((l) => { if (Number(l.salesAgentId) === id) l.salesAgentId = 0; });
+    renderPipeline(); renderDashboard();
+  }));
+  const add = document.getElementById("agAdd");
+  if (add) add.addEventListener("click", () => {
+    sharedState.salesAgents.push({ id: nextId(), name: "New agent", role: "", regionKey: "" });
+    renderPipeline(); renderDashboard();
+  });
+}
+
 function renderPipelineSiteRows(l) {
   const meta = pipelineSolutionMeta(l.solution);
   if (l.likelihood !== "contracted" || meta.basis !== "assessments") return "";
@@ -15000,9 +16016,9 @@ function renderPipeline() {
         : `<span style="color:var(--gray); font-size:10px;">monthly</span>`}</td>
       <td style="padding:4px 6px;"><input type="number" data-f="price" value="${l.price || 0}" style="width:92px; font-size:11px; text-align:right;"></td>
       <td style="padding:4px 6px;">${meta.margin ? `<input type="number" data-f="marginPct" value="${l.marginPct || 0}" style="width:58px; font-size:11px; text-align:right;">` : `<span style="color:var(--gray); font-size:10px;">n/a</span>`}</td>
-      <td style="padding:4px 6px;"><select data-f="salesRM" style="font-size:10.5px; max-width:120px;">
-        <option value="">\u2014 none \u2014</option>
-        ${rmOptions().map((o) => `<option value="${o.name}" ${l.salesRM === o.name ? "selected" : ""}>${o.name} (${o.region})</option>`).join("")}
+      <td style="padding:4px 6px;"><select data-f="salesAgentId" style="font-size:10.5px; max-width:150px;">
+        <option value="0">\u2014 none \u2014</option>
+        ${(sharedState.salesAgents || []).map((a) => `<option value="${a.id}" ${Number(l.salesAgentId) === a.id ? "selected" : ""}>${a.name}${a.regionKey ? ` \u2014 ${(mobilesState.regions[a.regionKey] || {}).name}` : ""}</option>`).join("")}
       </select></td>
       <td style="padding:4px 6px;"><select data-f="likelihood" style="font-size:11px;">${PIPELINE_LIKELIHOOD.map((k) => `<option value="${k.key}" ${l.likelihood === k.key ? "selected" : ""}>${k.label}</option>`).join("")}</select></td>
       <td style="padding:4px 6px; text-align:center; font-size:10px; font-weight:700; color:${inFc ? "var(--ink)" : "var(--gray)"};">${inFc ? "In" : "Out"}</td>
@@ -15046,7 +16062,7 @@ function renderPipeline() {
           <td style="padding:5px 6px;">Client</td><td style="padding:5px 6px;">Solution</td><td style="padding:5px 6px;">Revenue lands in</td>
           <td style="padding:5px 6px;">Service from</td><td style="padding:5px 6px;">to</td><td style="padding:5px 6px; text-align:center;">Term<br>(months)</td>
           <td style="padding:5px 6px; text-align:right;">Sites</td>
-          <td style="padding:5px 6px;">Sold by (RM)</td>
+          <td style="padding:5px 6px;">Sales agent</td>
           <td style="padding:5px 6px; text-align:right;">Vol / units</td><td style="padding:5px 6px; text-align:right;">Price</td>
           <td style="padding:5px 6px; text-align:right;">Margin %</td>
           <td style="padding:5px 6px;">Likelihood</td><td style="padding:5px 6px; text-align:center;">Forecast</td><td style="padding:5px 6px; text-align:center;">Remove</td>
@@ -15102,7 +16118,7 @@ function renderPipeline() {
       </table>
       </div>
       <footer class="source-note">Switching the toggle on replaces the Employer Solutions and Community Health volume assumptions with the forecastable pipeline. Everything downstream — capacity, breakeven, cash flow and the consolidation — follows from there.</footer>
-    </div>`;
+    </div>` + renderSalesAgentsCard();
 
   const P2 = sharedState.pipeline;
   const feed = document.getElementById("plFeed");
@@ -15114,7 +16130,7 @@ function renderPipeline() {
     tr.querySelectorAll("[data-f]").forEach((inp) => {
       inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", (ev) => {
         const f = ev.target.dataset.f;
-        l[f] = ["volumePerMonth", "units", "price", "marginPct", "mobilesRequired", "siteCount"].includes(f) ? Number(ev.target.value || 0) : ev.target.value;
+        l[f] = ["volumePerMonth", "units", "price", "marginPct", "mobilesRequired", "siteCount", "salesAgentId"].includes(f) ? Number(ev.target.value || 0) : ev.target.value;
         if (f === "solution") { l.basis = pipelineSolutionMeta(l.solution).basis; }
         // Site count, likelihood and volume all change what the site rows
         // should look like, so rebuild them before re-rendering.
@@ -15124,6 +16140,7 @@ function renderPipeline() {
     });
   });
   bindPipelineSiteEvents();
+  bindSalesAgentEvents();
   document.querySelectorAll(".pl-del").forEach((b) => b.addEventListener("click", (ev) => {
     P2.lines = P2.lines.filter((x) => x.id !== Number(ev.target.dataset.del));
     applyPipelineToVolumePlan(); renderPipeline(); renderDashboard(); renderSummary();
@@ -16540,6 +17557,9 @@ function initAssumptionTabs() {
 }
 
 function initRail() {
+  // Start with the entity rail collapsed so the content has the full width;
+  // the header toggle brings it back.
+  document.body.classList.add("rail-collapsed");
   syncRailOffset();
   syncBrand();
   initAssumptionTabs();
@@ -16562,6 +17582,12 @@ function initRail() {
   const t = document.getElementById("railToggleBtn");
   if (t) t.addEventListener("click", () => {
     document.body.classList.toggle("rail-collapsed");
+    syncRailOffset();
+  });
+  const io = document.getElementById("ioToggleBtn");
+  const tray = document.getElementById("ioTray");
+  if (io && tray) io.addEventListener("click", () => {
+    tray.style.display = tray.style.display === "none" ? "flex" : "none";
     syncRailOffset();
   });
   // Selecting an entity scrolls the content back to the top; without
