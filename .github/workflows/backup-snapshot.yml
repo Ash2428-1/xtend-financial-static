@@ -1,0 +1,45 @@
+name: Backup snapshot before update
+
+# Creates a tag pointing at the commit that existed BEFORE each push,
+# so any state that gets overwritten (including by a force-push) stays
+# reachable and restorable.
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tag the pre-push commit
+        env:
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Brand-new branch - there is no previous state to back up."
+            exit 0
+          fi
+
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          SAFE_BRANCH="${BRANCH//\//-}"
+          TAG="backup/${SAFE_BRANCH}/$(date -u +%Y-%m-%d-%H%M%S)"
+
+          echo "Backing up $BEFORE as tag $TAG"
+
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/refs" \
+            -d "{\"ref\":\"refs/tags/${TAG}\",\"sha\":\"${BEFORE}\"}" \
+            > /dev/null
+
+          echo "Restore with:  git checkout $TAG"
+          echo "::notice title=Backup created::$TAG -> $BEFORE"
