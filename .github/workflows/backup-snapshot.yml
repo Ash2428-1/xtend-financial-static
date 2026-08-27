@@ -1,5 +1,105 @@
 name: Backup snapshot before update
 
+# On every push, tag the commit that existed BEFORE the push, so nothing that
+# was on the branch is ever unrecoverable - including after a force-push or a
+# history rewrite, where the old commits stop being reachable from the branch.
+#
+#   backup/<branch>/<timestamp>           routine push - pruned, keeping the newest KEEP
+#   backup/<branch>/<timestamp>-rewrite   history was rewritten - kept forever
+#
+# Restore with:  git fetch --tags && git checkout <tag>
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backup-snapshot-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Snapshot the pre-push commit
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP: '30'
+        run: |
+          set -euo pipefail
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "Brand-new branch - there is no previous state to back up."
+            exit 0
+          fi
+
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          SAFE_BRANCH="${BRANCH//\//-}"
+          STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
+
+          # Was this a plain fast-forward, or did someone rewrite history?
+          STATUS="$(curl -sS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/compare/$BEFORE...$AFTER" \
+            | jq -r '.status // "unknown"')"
+
+          if [ "$STATUS" = "ahead" ] || [ "$STATUS" = "identical" ]; then
+            TAG="backup/$SAFE_BRANCH/$STAMP"
+            PRUNE=true
+            echo "Routine push (compare status: $STATUS)."
+          else
+            TAG="backup/$SAFE_BRANCH/$STAMP-rewrite"
+            PRUNE=false
+            echo "::warning title=History rewritten::Push was not a fast-forward (compare status: $STATUS). This snapshot is kept permanently."
+          fi
+
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/git/refs" \
+            -d "$(jq -nc --arg ref "refs/tags/$TAG" --arg sha "$BEFORE" '{ref:$ref,sha:$sha}')" \
+            > /dev/null
+
+          echo "::notice title=Backup created::$TAG -> $BEFORE"
+          echo "Restore with:  git fetch --tags && git checkout $TAG"
+
+          [ "$PRUNE" = true ] || exit 0
+
+          # Prune routine snapshots for this branch, keeping the newest $KEEP.
+          # Rewrite snapshots are never pruned. Pruning a routine snapshot
+          # discards nothing: its commit is still an ancestor of the branch.
+          STALE="$(curl -sS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/git/matching-refs/tags/backup/$SAFE_BRANCH/?per_page=100" \
+            | jq -r '.[].ref' \
+            | grep -v -- '-rewrite$' \
+            | sort -r \
+            | tail -n +"$((KEEP + 1))" || true)"
+
+          if [ -z "$STALE" ]; then
+            echo "No snapshots to prune (keeping newest $KEEP)."
+            exit 0
+          fi
+
+          echo "$STALE" | while read -r REF; do
+            [ -n "$REF" ] || continue
+            echo "Pruning $REF"
+            curl -sS -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/git/$REF" > /dev/null
+          done
+name: Backup snapshot before update
+
 # Creates a tag pointing at the commit that existed BEFORE each push,
 # so any state that gets overwritten (including by a force-push) stays
 # reachable and restorable.
