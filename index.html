@@ -9048,6 +9048,7 @@ const MOBILE_SECTIONS = [
   { key: "pnl", label: "P&L" },
   { key: "costbudget", label: "Cost vs Budget" },
   { key: "forward", label: "Forward View" },
+  { key: "invoicing", label: "Invoicing" },
   { key: "workcap", label: "Working Capital" },
   { key: "cashflow", label: "Cashflow" },
   { key: "ops", label: "Operational Tracking" },
@@ -10320,6 +10321,949 @@ function renderPrepaymentCard(fleet) {
       </table>` : ""}`;
 }
 
+
+/* ============================================================
+   MOBILE INVOICING LEDGER
+   A day's work on a mobile is a trading event: the mobile earns
+   from the Support Office for the assessments it completed, and
+   owes every supplier whose charge sits in that solution's cost
+   stack for the same assessments. Capturing the day therefore
+   raises one sales invoice and a set of purchase invoices, all
+   priced off the same volume — which is why they can be generated
+   rather than typed.
+
+   Excluded by design: fuel and data, which are bought in advance
+   and sit as prepayments, and crew, who are paid through payroll
+   rather than invoiced. The RM is included — the delivery fee is
+   a genuine invoice from the RM to the mobile.
+   ============================================================ */
+function invStore() {
+  if (!mobilesState.invoices) mobilesState.invoices = [];
+  if (!mobilesState.dayLog) mobilesState.dayLog = [];
+  if (!mobilesState.bankLines) mobilesState.bankLines = [];
+  if (typeof mobilesState.invSeq !== "number") mobilesState.invSeq = 1000;
+  return mobilesState;
+}
+function nextInvNo(prefix) {
+  const st = invStore();
+  st.invSeq += 1;
+  return prefix + "-" + st.invSeq;
+}
+function invTerms() {
+  if (!sharedState.invoiceTerms) sharedState.invoiceTerms = { arDays: 30, apDays: 30 };
+  return sharedState.invoiceTerms;
+}
+
+// Everything owed on a volume of one solution, from that solution's own cost
+// stack. One row becomes one supplier invoice.
+function supplierLinesFor(bucket, fleet) {
+  const prod = mobilesState.products[bucket];
+  if (!prod) return [];
+  const prepaid = Object.values(topUpRules().items).map(function (x) { return x.line; });
+  // Consumables are ordered against what a site actually needs, so the
+  // per-assessment rate is a budget yardstick, not a price to invoice on.
+  // Those lines are captured from the supplier's own invoice instead.
+  const onActual = sharedState.billedOnActual || [];
+  return (prod.variableCostLines || [])
+    .filter(function (l) {
+      return Number(l.value || 0) > 0 && prepaid.indexOf(l.label) < 0 && onActual.indexOf(l.label) < 0;
+    })
+    .map(function (l) {
+      const isRM = /Regional Management/i.test(l.label);
+      const rmName = rmNameFor(mobileRec(fleet).dashRegion) || "Regional Manager";
+      return { label: l.label, rate: Number(l.value || 0),
+        counterparty: isRM ? rmName + " (RM)" : counterpartyFor(l.label) };
+    });
+}
+
+// Raise the day's invoices. Guarded on the day-log entry so pressing the
+// button twice cannot double-invoice.
+function generateDayInvoices(entryId) {
+  const st = invStore();
+  const e = st.dayLog.find(function (x) { return x.id === entryId; });
+  if (!e || e.invoiced) return { created: 0 };
+  const bucket = e.solution;
+  const prod = mobilesState.products[bucket] || {};
+  const charge = Number(prod.revenue || 0);
+  const T = invTerms();
+  const due = function (days) { return cfISO(cfAddDays(new Date(e.date + "T00:00:00"), days)); };
+  const created = [];
+
+  if (charge > 0 && e.assessments > 0) {
+    created.push({ id: nextId(), no: nextInvNo("INV"), type: "AR", fleet: e.fleet, entryId: e.id,
+      solution: bucket, date: e.date, dueDate: due(T.arDays),
+      counterparty: "Guud Mobiles Support Office",
+      description: PAYROLL_BUCKET_LABEL[bucket] + " \u2014 " + e.assessments + " assessments",
+      assessments: e.assessments, rate: charge, amount: e.assessments * charge, allocated: 0 });
+  }
+  supplierLinesFor(bucket, e.fleet).forEach(function (l) {
+    created.push({ id: nextId(), no: nextInvNo("BILL"), type: "AP", fleet: e.fleet, entryId: e.id,
+      solution: bucket, date: e.date, dueDate: due(T.apDays),
+      counterparty: l.counterparty,
+      description: l.label + " \u2014 " + e.assessments + " assessments",
+      assessments: e.assessments, rate: l.rate, amount: e.assessments * l.rate, allocated: 0 });
+  });
+  st.invoices.push.apply(st.invoices, created);
+  e.invoiced = true;
+  return { created: created.length };
+}
+
+// Raise a supplier invoice from the document the supplier actually sent,
+// for the lines that are ordered rather than accrued per assessment.
+function captureSupplierInvoice(fleet, line, date, amount, note, assessments) {
+  const st = invStore();
+  const T = invTerms();
+  const bucket = payrollBucketOf(mobileRec(fleet).vehicleType);
+  const prod = mobilesState.products[bucket] || {};
+  const l = (prod.variableCostLines || []).find(function (x) { return x.label === line; });
+  const rate = l ? Number(l.value || 0) : 0;
+  st.invoices.push({ id: nextId(), no: nextInvNo("BILL"), type: "AP", fleet: fleet, entryId: null,
+    solution: bucket, date: date, dueDate: cfISO(cfAddDays(new Date(date + "T00:00:00"), T.apDays)),
+    counterparty: counterpartyFor(line), description: line + (note ? " \u2014 " + note : ""),
+    assessments: Number(assessments || 0), rate: rate, amount: Number(amount || 0), allocated: 0,
+    onActual: true, budget: rate * Number(assessments || 0) });
+  return true;
+}
+
+function invoicesFor(fleet, type) {
+  return invStore().invoices.filter(function (i) {
+    return i.fleet === fleet && (!type || i.type === type);
+  });
+}
+function invOutstanding(i) { return Math.max(0, i.amount - Number(i.allocated || 0)); }
+
+// Standard 30/60/90 ageing off the invoice date.
+function ageBucket(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const days = Math.floor((cfToday() - d) / 86400000);
+  if (days < 30) return 0;
+  if (days < 60) return 1;
+  if (days < 90) return 2;
+  return 3;
+}
+function ageingFor(fleet, type) {
+  const rows = {};
+  invoicesFor(fleet, type).forEach(function (i) {
+    const out = invOutstanding(i);
+    if (out <= 0.005) return;
+    if (!rows[i.counterparty]) rows[i.counterparty] = [0, 0, 0, 0];
+    rows[i.counterparty][ageBucket(i.date)] += out;
+  });
+  const list = Object.keys(rows).map(function (cp) {
+    const b = rows[cp];
+    return { counterparty: cp, buckets: b, total: b.reduce(function (a, v) { return a + v; }, 0) };
+  }).sort(function (a, b) { return b.total - a.total; });
+  const totals = list.reduce(function (a, r) {
+    return a.map(function (v, i) { return v + r.buckets[i]; });
+  }, [0, 0, 0, 0]);
+  return { list: list, totals: totals, grand: totals.reduce(function (a, v) { return a + v; }, 0) };
+}
+
+/* ---- bank statement import and allocation ---- */
+function parseBankCsv(text, fleet) {
+  const out = [];
+  text.split(/\r?\n/).forEach(function (line, idx) {
+    if (!line.trim()) return;
+    const f = line.split(",").map(function (c) {
+      return c.replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+    });
+    if (f.length < 2) return;
+    const amount = Number(String(f[f.length - 1]).replace(/[^\d.\-]/g, ""));
+    // Skip a header row rather than importing it as a transaction.
+    if (!isFinite(amount) || amount === 0) return;
+    out.push({ id: nextId(), fleet: fleet, date: f[0] || "", description: f[1] || "",
+      reference: f.length > 3 ? f[2] : "", amount: amount, allocations: [] });
+  });
+  return out;
+}
+function bankAllocated(b) {
+  return (b.allocations || []).reduce(function (a, x) { return a + Number(x.amount || 0); }, 0);
+}
+function bankUnallocated(b) { return b.amount - bankAllocated(b); }
+
+// Suggest the invoice a transaction most likely settles: right side of the
+// ledger, invoice number or counterparty in the narrative, closest amount.
+function suggestMatch(b) {
+  const wantType = b.amount > 0 ? "AR" : "AP";
+  const target = Math.abs(bankUnallocated(b));
+  if (target <= 0.005) return null;
+  const cands = invoicesFor(b.fleet, wantType).filter(function (i) { return invOutstanding(i) > 0.005; });
+  let best = null, bestScore = -1;
+  const hay = ((b.description || "") + " " + (b.reference || "")).toLowerCase();
+  cands.forEach(function (i) {
+    let score = 0;
+    if (hay.indexOf(i.no.toLowerCase()) >= 0) score += 100;
+    const cpFirst = String(i.counterparty).toLowerCase().split(" ")[0];
+    if (cpFirst && hay.indexOf(cpFirst) >= 0) score += 20;
+    const diff = Math.abs(invOutstanding(i) - target);
+    if (diff < 0.01) score += 50;
+    else score += Math.max(0, 20 - (diff / Math.max(1, target)) * 20);
+    if (score > bestScore) { bestScore = score; best = i; }
+  });
+  return best;
+}
+function allocateBank(bankId, invoiceId) {
+  const st = invStore();
+  const b = st.bankLines.find(function (x) { return x.id === bankId; });
+  const i = st.invoices.find(function (x) { return x.id === invoiceId; });
+  if (!b || !i) return;
+  const amt = Math.min(Math.abs(bankUnallocated(b)), invOutstanding(i));
+  if (amt <= 0.005) return;
+  b.allocations.push({ invoiceId: invoiceId, amount: amt });
+  i.allocated = Number(i.allocated || 0) + amt;
+}
+function unallocateBank(bankId) {
+  const st = invStore();
+  const b = st.bankLines.find(function (x) { return x.id === bankId; });
+  if (!b) return;
+  (b.allocations || []).forEach(function (a) {
+    const i = st.invoices.find(function (x) { return x.id === a.invoiceId; });
+    if (i) i.allocated = Math.max(0, Number(i.allocated || 0) - a.amount);
+  });
+  b.allocations = [];
+}
+
+
+function secMobileInvoicing(fleet) {
+  invStore();
+  const rec = mobileRec(fleet);
+  const bucket = payrollBucketOf(rec.vehicleType);
+  const log = mobilesState.dayLog.filter(function (e) { return e.fleet === fleet; })
+    .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+  const ar = ageingFor(fleet, "AR"), ap = ageingFor(fleet, "AP");
+  const invs = invoicesFor(fleet).sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+  const bank = mobilesState.bankLines.filter(function (b) { return b.fleet === fleet; })
+    .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+  const T = invTerms();
+
+  const solOpts = ["pocx", "sioc", "dental"].map(function (k) {
+    return '<option value="' + k + '"' + (k === bucket ? " selected" : "") + '>' + PAYROLL_BUCKET_LABEL[k] + "</option>";
+  }).join("");
+
+  // ---- daily capture ----
+  const logRows = log.slice(0, 14).map(function (e) {
+    const mine = mobilesState.invoices.filter(function (i) { return i.entryId === e.id; });
+    const value = mine.filter(function (i) { return i.type === "AR"; }).reduce(function (a, i) { return a + i.amount; }, 0);
+    const cost = mine.filter(function (i) { return i.type === "AP"; }).reduce(function (a, i) { return a + i.amount; }, 0);
+    return '<tr data-day="' + e.id + '" style="' + (e.invoiced ? "" : "background:var(--amber-bg);") + '">' +
+      '<td style="padding:4px 8px;">' + e.date + "</td>" +
+      '<td style="padding:4px 8px; font-size:10.5px;">' + (PAYROLL_BUCKET_LABEL[e.solution] || e.solution) + "</td>" +
+      '<td style="padding:4px 8px; text-align:right; font-weight:600;">' + e.assessments + "</td>" +
+      '<td style="padding:4px 8px; text-align:right;">' + (e.invoiced ? fmtR(value) : "\u2014") + "</td>" +
+      '<td style="padding:4px 8px; text-align:right;">' + (e.invoiced ? fmtR(cost) : "\u2014") + "</td>" +
+      '<td style="padding:4px 8px; text-align:right; font-weight:700; color:' + (value - cost < 0 ? "var(--red)" : "var(--green)") + ';">' +
+        (e.invoiced ? fmtR(value - cost) : "\u2014") + "</td>" +
+      '<td style="padding:4px 8px; text-align:center;">' + (e.invoiced
+        ? '<span style="font-size:10px; font-weight:700; color:var(--green);">\u2713 ' + mine.length + " invoices</span>"
+        : '<button class="day-gen" data-day="' + e.id + '" style="padding:3px 10px; border-radius:20px; border:1px solid var(--teal); background:var(--teal); color:#fff; font-size:10px; font-weight:700; cursor:pointer;">Raise invoices</button>') + "</td>" +
+      '<td style="padding:4px 8px; text-align:center;">' + (e.invoiced ? "" :
+        '<button class="day-del" data-day="' + e.id + '" style="border:none;background:none;color:var(--red);font-size:15px;font-weight:700;cursor:pointer;">\u00d7</button>') + "</td></tr>";
+  }).join("");
+
+  // ---- ageing ----
+  const ageTable = function (a, title, note) {
+    const heads = ["Current", "30 days", "60 days", "90+ days"];
+    return '<div class="section-label" style="margin-top:18px;">' + title + "</div>" +
+      '<div style="font-size:10.5px; font-style:italic; color:var(--gray); margin-bottom:8px;">' + note + "</div>" +
+      '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px; max-width:820px;">' +
+      '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Counterparty</td>' +
+      heads.map(function (h) { return '<td style="padding:5px 8px; text-align:right;">' + h + "</td>"; }).join("") +
+      '<td style="padding:5px 8px; text-align:right;">Total</td></tr></thead><tbody>' +
+      (a.list.length ? a.list.map(function (r) {
+        return "<tr><td style=\"padding:4px 8px; font-weight:500;\">" + r.counterparty + "</td>" +
+          r.buckets.map(function (v, i) {
+            return '<td style="padding:4px 8px; text-align:right;' + (i >= 2 && v > 0 ? " color:var(--red); font-weight:700;" : "") + '">' + (v ? fmtR(v) : "\u2014") + "</td>";
+          }).join("") +
+          '<td style="padding:4px 8px; text-align:right; font-weight:700; background:var(--mint-bg);">' + fmtR(r.total) + "</td></tr>";
+      }).join("") : '<tr><td colspan="6" style="padding:8px; color:var(--gray);">Nothing outstanding.</td></tr>') +
+      '</tbody><tfoot><tr style="background:var(--teal); color:#fff; font-weight:700;"><td style="padding:5px 8px;">TOTAL</td>' +
+      a.totals.map(function (v) { return '<td style="padding:5px 8px; text-align:right;">' + fmtR(v) + "</td>"; }).join("") +
+      '<td style="padding:5px 8px; text-align:right;">' + fmtR(a.grand) + "</td></tr></tfoot></table></div>";
+  };
+
+  // ---- invoice register ----
+  const invRows = invs.slice(0, 40).map(function (i) {
+    const out = invOutstanding(i);
+    const settled = out <= 0.005;
+    return '<tr style="' + (settled ? "opacity:.5;" : "") + '">' +
+      '<td style="padding:4px 8px; font-family:monospace; font-size:10.5px;">' + i.no + "</td>" +
+      '<td style="padding:4px 8px;"><span style="display:inline-block; padding:1px 7px; border-radius:20px; font-size:9px; font-weight:700; background:' +
+        (i.type === "AR" ? "var(--mint-bg); color:#1173B8" : "var(--light); color:var(--gray)") + ';">' + i.type + "</span></td>" +
+      '<td style="padding:4px 8px;">' + i.date + "</td>" +
+      '<td style="padding:4px 8px; font-weight:500;">' + i.counterparty + "</td>" +
+      '<td style="padding:4px 8px; font-size:10.5px; color:var(--gray);">' + i.description + "</td>" +
+      '<td style="padding:4px 8px; text-align:right;">' + fmtR(i.amount) + "</td>" +
+      '<td style="padding:4px 8px; text-align:right; font-weight:700; color:' + (settled ? "var(--gray)" : "var(--ink)") + ';">' +
+        (settled ? "settled" : fmtR(out)) + "</td></tr>";
+  }).join("");
+
+  // ---- bank ----
+  const bankRows = bank.map(function (b) {
+    const un = bankUnallocated(b);
+    const sug = Math.abs(un) > 0.005 ? suggestMatch(b) : null;
+    return '<tr data-bank="' + b.id + '" style="' + (Math.abs(un) <= 0.005 ? "opacity:.5;" : "") + '">' +
+      '<td style="padding:4px 8px;">' + b.date + "</td>" +
+      '<td style="padding:4px 8px; font-size:10.5px;">' + b.description + (b.reference ? ' <span style="color:var(--gray);">' + b.reference + "</span>" : "") + "</td>" +
+      '<td style="padding:4px 8px; text-align:right; font-weight:700; color:' + (b.amount > 0 ? "var(--green)" : "var(--red)") + ';">' + fmtR(b.amount) + "</td>" +
+      '<td style="padding:4px 8px; text-align:right;">' + (Math.abs(un) <= 0.005 ? "\u2014" : fmtR(un)) + "</td>" +
+      '<td style="padding:4px 8px; font-size:10.5px;">' + (Math.abs(un) <= 0.005
+        ? '<span style="color:var(--green); font-weight:700;">\u2713 allocated</span>'
+        : (sug ? sug.no + " \u00b7 " + sug.counterparty + " \u00b7 " + fmtR(invOutstanding(sug)) : '<span style="color:var(--gray);">no match found</span>')) + "</td>" +
+      '<td style="padding:4px 8px; text-align:center;">' + (Math.abs(un) <= 0.005
+        ? '<button class="bank-unalloc" data-bank="' + b.id + '" style="padding:3px 9px; border-radius:20px; border:1px solid var(--line); background:#fff; font-size:9.5px; cursor:pointer;">Undo</button>'
+        : (sug ? '<button class="bank-alloc" data-bank="' + b.id + '" data-inv="' + sug.id + '" style="padding:3px 10px; border-radius:20px; border:1px solid var(--teal); background:var(--teal); color:#fff; font-size:10px; font-weight:700; cursor:pointer;">Allocate</button>' : "")) + "</td></tr>";
+  }).join("");
+
+  // ---- lines billed on actual: captured, not accrued ----
+  const onActualLines = (mobilesState.products[bucket] || {}).variableCostLines
+    ? (mobilesState.products[bucket].variableCostLines || []).filter(function (l) {
+        return (sharedState.billedOnActual || []).indexOf(l.label) >= 0;
+      }) : [];
+  const monthAssess = mobilesState.dayLog.filter(function (e) {
+    return e.fleet === fleet && String(e.date).slice(0, 7) === currentMonthKey();
+  }).reduce(function (a, e) { return a + Number(e.assessments || 0); }, 0);
+  const onActualRows = onActualLines.map(function (l) {
+    const cp = counterpartyFor(l.label);
+    const billed = invoicesFor(fleet, "AP").filter(function (i) {
+      return i.onActual && String(i.description).indexOf(l.label) === 0
+        && String(i.date).slice(0, 7) === currentMonthKey();
+    });
+    const billedTot = billed.reduce(function (a, i) { return a + i.amount; }, 0);
+    const budget = Number(l.value || 0) * monthAssess;
+    const varr = billedTot - budget;
+    return '<tr data-oa="' + l.label.replace(/"/g, "&quot;") + '" data-fleet="' + fleet + '">' +
+      '<td style="padding:4px 8px; font-weight:500;">' + cp + '<div style="font-size:9px; color:var(--gray);">' + l.label + "</div></td>" +
+      '<td style="padding:4px 8px; text-align:right; color:var(--gray);">' + fmtR(l.value) + "</td>" +
+      '<td style="padding:4px 8px; text-align:right;">' + fmtR(budget) + '<div style="font-size:9px; color:var(--gray);">' + monthAssess + " assessments</div></td>" +
+      '<td style="padding:4px 8px; text-align:right; font-weight:700;">' + (billedTot ? fmtR(billedTot) : "\u2014") + "</td>" +
+      '<td style="padding:4px 8px; text-align:right; font-weight:700; color:' + (varr > 0.5 ? "var(--red)" : varr < -0.5 ? "var(--green)" : "var(--gray)") + ';">' +
+        (billedTot ? fmtR(varr) : "\u2014") + "</td>" +
+      '<td style="padding:4px 8px;"><input type="date" class="oa-date" value="' + cfISO(cfToday()) + '" style="font-size:10.5px;"></td>' +
+      '<td style="padding:4px 8px;"><input type="number" class="oa-amt" placeholder="invoice amount" style="width:110px; font-size:11px; text-align:right;"></td>' +
+      '<td style="padding:4px 8px;"><input type="text" class="oa-note" placeholder="order ref" style="width:110px; font-size:11px;"></td>' +
+      '<td style="padding:4px 8px; text-align:center;"><button class="oa-add" style="padding:3px 10px; border-radius:20px; border:1px solid var(--teal); background:var(--teal); color:#fff; font-size:10px; font-weight:700; cursor:pointer;">Capture</button></td></tr>';
+  }).join("");
+  const onActualBlock = onActualLines.length ? (
+    '<div class="section-label" style="margin-top:18px;">Ordered and invoiced on actual</div>' +
+    '<div style="font-size:10.5px; font-style:italic; color:var(--gray); margin-bottom:8px;">These are ordered against what a site actually needs, so they are <b>not</b> raised from assessments. Capture the supplier\u2019s own invoice and it joins the supplier ageing like any other. The per-assessment rate is shown only as a yardstick against the month\u2019s volume.</div>' +
+    '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">' +
+    '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Supplier</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Budget rate</td><td style="padding:5px 8px; text-align:right;">Budget this month</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Invoiced</td><td style="padding:5px 8px; text-align:right;">Variance</td>' +
+    '<td style="padding:5px 8px;">Invoice date</td><td style="padding:5px 8px;">Amount</td>' +
+    '<td style="padding:5px 8px;">Reference</td><td style="padding:5px 8px; text-align:center;">\u2014</td>' +
+    "</tr></thead><tbody>" + onActualRows + "</tbody></table></div>") : "";
+
+  const unmatched = bank.filter(function (b) { return Math.abs(bankUnallocated(b)) > 0.005; }).length;
+  const kpi = function (l, v, sub, bad) {
+    return '<div style="flex:1 1 165px; background:' + (bad ? "var(--amber-bg)" : "var(--light)") + '; border-radius:10px; padding:10px 12px;">' +
+      '<div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">' + l + "</div>" +
+      '<div style="font-family:var(--font-head); font-size:21px; font-weight:700; color:' + (bad ? "#8A6015" : "var(--ink)") + ';">' + v + "</div>" +
+      '<div style="font-size:10.5px; color:var(--gray);">' + sub + "</div></div>";
+  };
+
+  return '<div class="card">' +
+    '<div class="eyebrow">' + mobileName(fleet) + (bucket ? " \u00b7 " + PAYROLL_BUCKET_LABEL[bucket] : "") + "</div>" +
+    "<h3>Invoicing &amp; Ledger</h3>" +
+    '<div class="hint" style="margin-bottom:12px;">Capture the assessments done on a day and the invoices raise themselves: one sales invoice to the Support Office for the revenue, and a purchase invoice to every supplier in that solution\u2019s cost stack for the same volume. Fuel and data are excluded \u2014 they are prepayments \u2014 as are consumables, which are ordered against what a site actually needs and captured from the supplier\u2019s own invoice. Crew are paid through payroll rather than invoiced. Terms are ' + T.arDays + " days on sales and " + T.apDays + " on purchases.</div>" +
+    '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">' +
+      kpi("Owed to the mobile", fmtR(ar.grand), (ar.totals[2] + ar.totals[3] > 0 ? fmtR(ar.totals[2] + ar.totals[3]) + " over 60 days" : "all current"), ar.totals[2] + ar.totals[3] > 0) +
+      kpi("Owed by the mobile", fmtR(ap.grand), (ap.totals[2] + ap.totals[3] > 0 ? fmtR(ap.totals[2] + ap.totals[3]) + " over 60 days" : "all current"), ap.totals[2] + ap.totals[3] > 0) +
+      kpi("Net position", fmtR(ar.grand - ap.grand), (ar.grand - ap.grand < 0 ? "owes more than it is owed" : "net receivable"), ar.grand - ap.grand < 0) +
+      kpi("Bank unallocated", unmatched, "transactions to match", unmatched > 0) +
+    "</div>" +
+
+    '<div class="section-label">Capture a day</div>' +
+    '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px; font-size:11.5px;">' +
+      '<label>Date<br><input type="date" id="dayDate" value="' + cfISO(cfToday()) + '" style="font-size:11px;"></label>' +
+      '<label>Solution<br><select id="daySol" style="font-size:11px;">' + solOpts + "</select></label>" +
+      '<label>Assessments<br><input type="number" id="dayCount" value="" placeholder="0" style="width:90px; font-size:11px; text-align:right;"></label>' +
+      '<button class="btn" id="dayAdd" data-fleet="' + fleet + '" style="background:var(--teal) !important; color:#fff !important; border-color:var(--teal) !important;">Add day</button>' +
+      '<span style="font-size:10.5px; color:var(--gray);">Assessment counts will come from Shayela; capture them here until that feed is live.</span>' +
+    "</div>" +
+    '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">' +
+      '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Date</td>' +
+      '<td style="padding:5px 8px;">Solution</td><td style="padding:5px 8px; text-align:right;">Assessments</td>' +
+      '<td style="padding:5px 8px; text-align:right;">Invoiced out</td><td style="padding:5px 8px; text-align:right;">Billed in</td>' +
+      '<td style="padding:5px 8px; text-align:right;">Margin</td><td style="padding:5px 8px; text-align:center;">Invoices</td>' +
+      '<td style="padding:5px 8px; text-align:center;">\u2014</td></tr></thead><tbody>' +
+      (logRows || '<tr><td colspan="8" style="padding:10px; color:var(--gray);">No days captured yet.</td></tr>') +
+      "</tbody></table></div>" +
+
+    onActualBlock +
+    ageTable(ar, "Customer ageing \u2014 owed to this mobile", "Sales invoices to the Support Office, aged from the invoice date. Anything past 60 days is red.") +
+    ageTable(ap, "Supplier ageing \u2014 owed by this mobile", "Purchase invoices from the ecosystem partners and the RM, on the same basis.") +
+
+    '<div class="section-label" style="margin-top:18px;">Bank statement</div>' +
+    '<div style="font-size:10.5px; font-style:italic; color:var(--gray); margin-bottom:8px;">Paste or upload the mobile\u2019s statement as CSV \u2014 date, description, reference, amount, with money in positive and money out negative. Each line is matched against an open invoice on the right side of the ledger, scoring the invoice number in the narrative first, then the counterparty, then the amount. Allocating settles the invoice and clears it from the ageing.</div>' +
+    '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start; margin-bottom:10px;">' +
+      '<textarea id="bankPaste" placeholder="2026-08-25,Guud Mobiles Support Office,INV-1001,435000&#10;2026-08-26,Moblix Consumables,BILL-1002,-41400" style="flex:1 1 380px; min-height:64px; font-size:10.5px; font-family:monospace; padding:8px; border:1.5px solid var(--line); border-radius:8px;"></textarea>' +
+      '<div style="display:flex; flex-direction:column; gap:6px;">' +
+        '<button class="btn" id="bankImport" data-fleet="' + fleet + '" style="background:var(--teal) !important; color:#fff !important; border-color:var(--teal) !important;">Import lines</button>' +
+        '<input type="file" id="bankFile" accept=".csv,text/csv" data-fleet="' + fleet + '" style="font-size:10px; width:190px;">' +
+        '<button class="btn" id="bankAutoAll" data-fleet="' + fleet + '">Auto-allocate all</button>' +
+      "</div></div>" +
+    '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">' +
+      '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Date</td>' +
+      '<td style="padding:5px 8px;">Description</td><td style="padding:5px 8px; text-align:right;">Amount</td>' +
+      '<td style="padding:5px 8px; text-align:right;">Unallocated</td><td style="padding:5px 8px;">Suggested match</td>' +
+      '<td style="padding:5px 8px; text-align:center;">\u2014</td></tr></thead><tbody>' +
+      (bankRows || '<tr><td colspan="6" style="padding:10px; color:var(--gray);">No bank lines imported.</td></tr>') +
+      "</tbody></table></div>" +
+
+    '<div class="section-label" style="margin-top:18px;">Invoice register</div>' +
+    '<div style="overflow-x:auto; max-height:380px; overflow-y:auto;"><table style="width:100%; border-collapse:collapse; font-size:10.5px;">' +
+      '<thead><tr style="background:var(--ink); color:#fff; position:sticky; top:0;"><td style="padding:5px 8px;">Number</td>' +
+      '<td style="padding:5px 8px;">Type</td><td style="padding:5px 8px;">Date</td><td style="padding:5px 8px;">Counterparty</td>' +
+      '<td style="padding:5px 8px;">For</td><td style="padding:5px 8px; text-align:right;">Amount</td>' +
+      '<td style="padding:5px 8px; text-align:right;">Outstanding</td></tr></thead><tbody>' +
+      (invRows || '<tr><td colspan="7" style="padding:10px; color:var(--gray);">No invoices raised.</td></tr>') +
+      "</tbody></table></div>" +
+    '<footer class="source-note">Invoices are priced off the solution\u2019s cost stack, so the ledger and the budget cannot diverge. Raising is deliberate rather than automatic on capture, so a mis-keyed day can be deleted before it becomes a document. Once raised, a day cannot be re-invoiced.</footer>' +
+    "</div>";
+}
+
+function bindInvoicing() {
+  const add = document.getElementById("dayAdd");
+  if (add) add.addEventListener("click", function () {
+    const n = Number((document.getElementById("dayCount") || {}).value || 0);
+    if (!n) return;
+    invStore().dayLog.push({ id: nextId(), fleet: add.dataset.fleet,
+      date: (document.getElementById("dayDate") || {}).value || cfISO(cfToday()),
+      solution: (document.getElementById("daySol") || {}).value || "pocx",
+      assessments: n, invoiced: false });
+    renderDashboard();
+  });
+  document.querySelectorAll(".day-gen").forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      generateDayInvoices(Number(e.target.dataset.day));
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll(".day-del").forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      const id = Number(e.target.dataset.day);
+      mobilesState.dayLog = mobilesState.dayLog.filter(function (x) { return x.id !== id; });
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll("tr[data-oa]").forEach(function (tr) {
+    const btn = tr.querySelector(".oa-add");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      const amt = Number((tr.querySelector(".oa-amt") || {}).value || 0);
+      if (!amt) return;
+      const monthAssess = mobilesState.dayLog.filter(function (e) {
+        return e.fleet === tr.dataset.fleet && String(e.date).slice(0, 7) === currentMonthKey();
+      }).reduce(function (a, e) { return a + Number(e.assessments || 0); }, 0);
+      captureSupplierInvoice(tr.dataset.fleet, tr.dataset.oa,
+        (tr.querySelector(".oa-date") || {}).value || cfISO(cfToday()),
+        amt, (tr.querySelector(".oa-note") || {}).value || "", monthAssess);
+      renderDashboard();
+    });
+  });
+
+  const imp = document.getElementById("bankImport");
+  if (imp) imp.addEventListener("click", function () {
+    const ta = document.getElementById("bankPaste");
+    if (!ta || !ta.value.trim()) return;
+    const lines = parseBankCsv(ta.value, imp.dataset.fleet);
+    invStore().bankLines.push.apply(mobilesState.bankLines, lines);
+    ta.value = "";
+    renderDashboard();
+  });
+  const file = document.getElementById("bankFile");
+  if (file) file.addEventListener("change", function (e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = function () {
+      const lines = parseBankCsv(String(r.result), file.dataset.fleet);
+      invStore().bankLines.push.apply(mobilesState.bankLines, lines);
+      renderDashboard();
+    };
+    r.readAsText(f);
+  });
+  document.querySelectorAll(".bank-alloc").forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      allocateBank(Number(e.target.dataset.bank), Number(e.target.dataset.inv));
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll(".bank-unalloc").forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      unallocateBank(Number(e.target.dataset.bank));
+      renderDashboard();
+    });
+  });
+  const auto = document.getElementById("bankAutoAll");
+  if (auto) auto.addEventListener("click", function () {
+    // Only allocate where the match is unambiguous on amount; anything else
+    // is left for a person to look at.
+    mobilesState.bankLines.filter(function (b) { return b.fleet === auto.dataset.fleet; }).forEach(function (b) {
+      if (Math.abs(bankUnallocated(b)) <= 0.005) return;
+      const m = suggestMatch(b);
+      if (m && Math.abs(invOutstanding(m) - Math.abs(bankUnallocated(b))) < 0.01) allocateBank(b.id, m.id);
+    });
+    renderDashboard();
+  });
+}
+
+
+/* ============================================================
+   SERVICE DAYS ON THE SCHEDULE
+   The order comes from Guud SA to the Support Office, the Support
+   Office allocates vehicles, and the schedule tells the crew where
+   to be. So the schedule is where a day's work is confirmed —
+   assessments are captured against the service day itself rather
+   than typed into a separate form, and it is that capture which
+   raises the invoicing in both directions.
+
+   Days are generated from the committed deployments, so a day can
+   only be captured against work the mobile was actually scheduled
+   to do. Until Shayela feeds the counts, they are keyed here.
+   ============================================================ */
+function serviceDaysFor(fleet) {
+  const out = [];
+  const weekends = !!sharedState.orderSchedule.countWeekends;
+  orderDeployments().forEach(function (d) {
+    if (!d.assigned.includes(fleet) || !d.start) return;
+    const end = d.end || d.start;
+    const dt = new Date(d.start);
+    // One row per working day the mobile is on site.
+    const days = [];
+    while (dt <= end && days.length < 90) {
+      if (weekends || !cfIsWeekend(dt)) days.push(new Date(dt));
+      dt.setDate(dt.getDate() + 1);
+    }
+    const share = d.assigned.length ? d.total / d.assigned.length : d.total;
+    const perDay = days.length ? share / days.length : 0;
+    days.forEach(function (day) {
+      const iso = cfISO(day);
+      const entry = (mobilesState.dayLog || []).find(function (e) {
+        return e.fleet === fleet && e.date === iso && e.depKey === d.key;
+      });
+      out.push({ iso: iso, date: day, dep: d, planned: perDay, entry: entry || null,
+        client: d.client, site: d.label, solution: d.solution });
+    });
+  });
+  return out.sort(function (a, b) { return a.iso < b.iso ? -1 : 1; });
+}
+
+function secMobileScheduleCapture(fleet) {
+  invStore();
+  const days = serviceDaysFor(fleet);
+  const today = cfISO(cfToday());
+  const past = days.filter(function (d) { return d.iso <= today; });
+  const future = days.filter(function (d) { return d.iso > today; });
+  const captured = days.filter(function (d) { return d.entry; });
+  const uninvoiced = captured.filter(function (d) { return !d.entry.invoiced; });
+  const missing = past.filter(function (d) { return !d.entry; });
+
+  const row = function (d) {
+    const e = d.entry;
+    const done = e ? Number(e.assessments || 0) : null;
+    const variance = done == null ? null : done - d.planned;
+    const late = !e && d.iso <= today;
+    return '<tr data-sd="' + d.iso + '|' + d.dep.key + '" data-fleet="' + fleet + '" style="' +
+      (late ? "background:var(--amber-bg);" : e && e.invoiced ? "opacity:.6;" : "") + '">' +
+      '<td style="padding:4px 8px; white-space:nowrap; font-weight:500;">' + cfFmtDay(d.date) + "</td>" +
+      '<td style="padding:4px 8px; font-size:10.5px;">' + d.client + '<div style="font-size:9px; color:var(--gray);">' + d.site + "</div></td>" +
+      '<td style="padding:4px 8px; font-size:10px; color:var(--gray);">' + (PAYROLL_BUCKET_LABEL[d.solution] || d.solution) + "</td>" +
+      '<td style="padding:4px 8px; text-align:right; color:var(--gray);">' + Math.round(d.planned) + "</td>" +
+      '<td style="padding:4px 8px; text-align:right;">' +
+        (e && e.invoiced
+          ? '<b>' + done + "</b>"
+          : '<input type="number" class="sd-count" value="' + (done == null ? "" : done) + '" placeholder="' + Math.round(d.planned) + '" style="width:80px; font-size:11px; text-align:right;">') + "</td>" +
+      '<td style="padding:4px 8px; text-align:right; font-weight:700; color:' +
+        (variance == null ? "var(--gray)" : variance < 0 ? "var(--red)" : "var(--green)") + ';">' +
+        (variance == null ? "\u2014" : (variance > 0 ? "+" : "") + Math.round(variance)) + "</td>" +
+      '<td style="padding:4px 8px; text-align:center;">' +
+        (e && e.invoiced
+          ? '<span style="font-size:10px; font-weight:700; color:var(--green);">\u2713 invoiced</span>'
+          : e
+            ? '<button class="sd-raise" style="padding:3px 10px; border-radius:20px; border:1px solid var(--teal); background:var(--teal); color:#fff; font-size:10px; font-weight:700; cursor:pointer;">Raise invoices</button>'
+            : '<span style="font-size:10px; color:' + (late ? "#8A6015" : "var(--gray)") + ';">' + (late ? "not captured" : "scheduled") + "</span>") + "</td></tr>";
+  };
+
+  const kpi = function (l, v, sub, bad) {
+    return '<div style="flex:1 1 160px; background:' + (bad ? "var(--amber-bg)" : "var(--light)") + '; border-radius:10px; padding:10px 12px;">' +
+      '<div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">' + l + "</div>" +
+      '<div style="font-family:var(--font-head); font-size:21px; font-weight:700; color:' + (bad ? "#8A6015" : "var(--ink)") + ';">' + v + "</div>" +
+      '<div style="font-size:10.5px; color:var(--gray);">' + sub + "</div></div>";
+  };
+  const totalDone = captured.reduce(function (a, d) { return a + Number(d.entry.assessments || 0); }, 0);
+  const totalPlanned = days.reduce(function (a, d) { return a + d.planned; }, 0);
+
+  return '<div class="card">' +
+    '<div class="eyebrow">' + mobileName(fleet) + "</div><h3>Schedule &amp; Service Days</h3>" +
+    '<div class="hint" style="margin-bottom:12px;">Guud South Africa invoices the client and passes the order to the Support Office, which allocates the vehicles. This is the resulting schedule \u2014 where this mobile is due, and on which days. <b>Capture the assessments actually completed against each service day</b>, then raise the invoicing: the mobile bills the Support Office for the work, and every supplier bills the mobile for the same volume. Counts will come from Shayela; key them here until then.</div>' +
+    '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">' +
+      kpi("Service days", days.length, past.length + " to date, " + future.length + " ahead") +
+      kpi("Captured", captured.length + " / " + past.length, missing.length ? missing.length + " days not captured" : "up to date", missing.length > 0) +
+      kpi("Assessments done", Math.round(totalDone).toLocaleString("en-ZA"), "against " + Math.round(totalPlanned).toLocaleString("en-ZA") + " scheduled",
+        totalDone < totalPlanned * 0.9 && captured.length > 0) +
+      kpi("Awaiting invoicing", uninvoiced.length, uninvoiced.length ? "captured but not raised" : "all raised", uninvoiced.length > 0) +
+    "</div>" +
+    (uninvoiced.length > 1
+      ? '<button class="btn" id="sdRaiseAll" data-fleet="' + fleet + '" style="margin-bottom:10px; background:var(--teal) !important; color:#fff !important; border-color:var(--teal) !important;">Raise invoices for all ' + uninvoiced.length + " captured days</button>"
+      : "") +
+    '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">' +
+      '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Service day</td>' +
+      '<td style="padding:5px 8px;">Client &amp; site</td><td style="padding:5px 8px;">Solution</td>' +
+      '<td style="padding:5px 8px; text-align:right;">Scheduled</td><td style="padding:5px 8px; text-align:right;">Actually done</td>' +
+      '<td style="padding:5px 8px; text-align:right;">Variance</td><td style="padding:5px 8px; text-align:center;">Invoicing</td>' +
+      "</tr></thead><tbody>" +
+      (days.length ? days.map(row).join("")
+        : '<tr><td colspan="7" style="padding:12px; color:var(--gray); font-style:italic;">No service days \u2014 this mobile is not allocated to any deployment. Allocation is done on Upcoming Orders.</td></tr>') +
+      "</tbody></table></div>" +
+    '<footer class="source-note">Days are generated from the deployments this mobile is committed to, so work can only be captured against something it was scheduled to do. Scheduled volume is the site total spread across its working days and the mobiles on it \u2014 the variance is the operational efficiency measure, and it feeds the RM and Support Office metrics.</footer>' +
+    "</div>";
+}
+
+/* ============================================================
+   SUPPORT OFFICE — THE MIRROR SIDE
+   Every sales invoice a mobile raises is a purchase invoice for
+   the Support Office. This is that side of the same documents, so
+   the two never disagree: nothing is entered here, it is the
+   mobiles' own AR read from the other direction.
+   ============================================================ */
+function supportOfficeCreditors() {
+  invStore();
+  const rows = {};
+  mobilesState.invoices.filter(function (i) { return i.type === "AR"; }).forEach(function (i) {
+    const out = invOutstanding(i);
+    const name = mobileName(i.fleet);
+    if (!rows[name]) rows[name] = { mobile: name, fleet: i.fleet, buckets: [0, 0, 0, 0], total: 0, invoiced: 0, paid: 0 };
+    rows[name].invoiced += i.amount;
+    rows[name].paid += Number(i.allocated || 0);
+    if (out > 0.005) { rows[name].buckets[ageBucket(i.date)] += out; rows[name].total += out; }
+  });
+  const list = Object.keys(rows).map(function (k) { return rows[k]; })
+    .sort(function (a, b) { return b.total - a.total; });
+  const totals = list.reduce(function (a, r) { return a.map(function (v, i) { return v + r.buckets[i]; }); }, [0, 0, 0, 0]);
+  return { list: list, totals: totals,
+    grand: totals.reduce(function (a, v) { return a + v; }, 0),
+    invoiced: list.reduce(function (a, r) { return a + r.invoiced; }, 0),
+    paid: list.reduce(function (a, r) { return a + r.paid; }, 0) };
+}
+
+function renderSupportOfficeCreditorsCard() {
+  const d = supportOfficeCreditors();
+  const heads = ["Current", "30 days", "60 days", "90+ days"];
+  return '<div class="card">' +
+    '<div class="eyebrow">Guud Mobiles \u2014 Support Office</div><h3>Owed to the mobiles</h3>' +
+    '<div class="hint" style="margin-bottom:12px;">Guud South Africa invoices the client; the Support Office passes the order down and the mobiles do the work. Every invoice a mobile raises for assessments completed is a <b>creditor here</b> \u2014 this is the same set of documents seen from the Support Office side, so the two cannot disagree. Nothing is captured on this screen.</div>' +
+    '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">' +
+      '<div style="flex:1 1 165px; background:var(--light); border-radius:10px; padding:10px 12px;">' +
+        '<div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">Invoiced by mobiles</div>' +
+        '<div style="font-family:var(--font-head); font-size:21px; font-weight:700;">' + fmtR(d.invoiced) + "</div></div>" +
+      '<div style="flex:1 1 165px; background:var(--light); border-radius:10px; padding:10px 12px;">' +
+        '<div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">Settled</div>' +
+        '<div style="font-family:var(--font-head); font-size:21px; font-weight:700;">' + fmtR(d.paid) + "</div></div>" +
+      '<div style="flex:1 1 165px; background:' + (d.grand > 0 ? "var(--amber-bg)" : "var(--light)") + '; border-radius:10px; padding:10px 12px;">' +
+        '<div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">Outstanding</div>' +
+        '<div style="font-family:var(--font-head); font-size:21px; font-weight:700; color:' + (d.grand > 0 ? "#8A6015" : "var(--ink)") + ';">' + fmtR(d.grand) + "</div></div>" +
+      '<div style="flex:1 1 165px; background:' + (d.totals[2] + d.totals[3] > 0 ? "var(--red-bg)" : "var(--light)") + '; border-radius:10px; padding:10px 12px;">' +
+        '<div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">Over 60 days</div>' +
+        '<div style="font-family:var(--font-head); font-size:21px; font-weight:700; color:' + (d.totals[2] + d.totals[3] > 0 ? "var(--red)" : "var(--ink)") + ';">' + fmtR(d.totals[2] + d.totals[3]) + "</div></div>" +
+    "</div>" +
+    '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">' +
+    '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Mobile</td>' +
+    heads.map(function (h) { return '<td style="padding:5px 8px; text-align:right;">' + h + "</td>"; }).join("") +
+    '<td style="padding:5px 8px; text-align:right;">Outstanding</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Invoiced</td></tr></thead><tbody>' +
+    (d.list.length ? d.list.map(function (r) {
+      return "<tr><td style=\"padding:4px 8px; font-weight:500;\">" + r.mobile + "</td>" +
+        r.buckets.map(function (v, i) {
+          return '<td style="padding:4px 8px; text-align:right;' + (i >= 2 && v > 0 ? " color:var(--red); font-weight:700;" : "") + '">' + (v ? fmtR(v) : "\u2014") + "</td>";
+        }).join("") +
+        '<td style="padding:4px 8px; text-align:right; font-weight:700; background:var(--mint-bg);">' + fmtR(r.total) + "</td>" +
+        '<td style="padding:4px 8px; text-align:right; color:var(--gray);">' + fmtR(r.invoiced) + "</td></tr>";
+    }).join("") : '<tr><td colspan="7" style="padding:10px; color:var(--gray);">No mobile invoices raised yet. They are generated when a service day is captured on a mobile\u2019s schedule.</td></tr>') +
+    '</tbody><tfoot><tr style="background:var(--teal); color:#fff; font-weight:700;"><td style="padding:5px 8px;">TOTAL</td>' +
+    d.totals.map(function (v) { return '<td style="padding:5px 8px; text-align:right;">' + fmtR(v) + "</td>"; }).join("") +
+    '<td style="padding:5px 8px; text-align:right;">' + fmtR(d.grand) + "</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + fmtR(d.invoiced) + "</td></tr></tfoot></table></div></div>";
+}
+
+function bindScheduleCapture() {
+  document.querySelectorAll("tr[data-sd]").forEach(function (tr) {
+    const parts = String(tr.dataset.sd).split("|");
+    const iso = parts[0], depKey = parts[1], fleet = tr.dataset.fleet;
+    const inp = tr.querySelector(".sd-count");
+    if (inp) inp.addEventListener("change", function (e) {
+      const v = e.target.value;
+      const st = invStore();
+      let entry = st.dayLog.find(function (x) { return x.fleet === fleet && x.date === iso && x.depKey === depKey; });
+      if (v === "") {
+        if (entry && !entry.invoiced) st.dayLog = st.dayLog.filter(function (x) { return x !== entry; });
+      } else {
+        const dep = orderDeployments().find(function (d) { return d.key === depKey; });
+        if (!entry) {
+          entry = { id: nextId(), fleet: fleet, date: iso, depKey: depKey,
+            solution: dep ? dep.solution : payrollBucketOf(mobileRec(fleet).vehicleType),
+            assessments: Number(v), invoiced: false };
+          st.dayLog.push(entry);
+        } else if (!entry.invoiced) entry.assessments = Number(v);
+      }
+      renderDashboard();
+    });
+    const raise = tr.querySelector(".sd-raise");
+    if (raise) raise.addEventListener("click", function () {
+      const entry = invStore().dayLog.find(function (x) { return x.fleet === fleet && x.date === iso && x.depKey === depKey; });
+      if (entry) generateDayInvoices(entry.id);
+      renderDashboard();
+    });
+  });
+  const all = document.getElementById("sdRaiseAll");
+  if (all) all.addEventListener("click", function () {
+    invStore().dayLog.filter(function (e) { return e.fleet === all.dataset.fleet && !e.invoiced; })
+      .forEach(function (e) { generateDayInvoices(e.id); });
+    renderDashboard();
+  });
+}
+
+
+/* ============================================================
+   OPERATIONAL EFFICIENCY — FROM THE CAPTURES UP
+   Every metric here derives from what was captured against the
+   schedule, so mobile, region and Support Office are three views
+   of one dataset rather than three sets of numbers.
+
+   The measures chosen answer different questions:
+     adherence   are days being captured at all — data discipline
+     achievement did the mobile do what it was scheduled to do
+     throughput  assessments per operational day, and per crew member
+     consistency is the output steady or lumpy — an average of 40
+                 hides a mobile swinging between 10 and 70
+     yield       what a service day is actually worth in contribution
+     invoice lag how long capture-to-invoice takes — process discipline
+   ============================================================ */
+function opsFromCaptures(fleets, fromISO, toISO) {
+  invStore();
+  const from = fromISO || "0000-00-00", to = toISO || "9999-99-99";
+  const perFleet = {};
+  let dueDays = 0, capturedDays = 0, scheduled = 0, actual = 0;
+  const dayValues = [];
+  let lagSum = 0, lagN = 0, crewDaySum = 0, crewDayN = 0;
+  let revenue = 0, contribution = 0;
+
+  fleets.forEach(function (f) {
+    const days = serviceDaysFor(f).filter(function (d) { return d.iso >= from && d.iso <= to; });
+    const bucket = payrollBucketOf(mobileRec(f).vehicleType);
+    const crew = (mobilesState.payroll.staff || []).filter(function (s) { return s.fleet === f; }).length;
+    const charge = Number((mobilesState.products[bucket] || {}).revenue || 0);
+    const contribPer = contributionPerAssessment(bucket);
+    let fDue = 0, fCap = 0, fSched = 0, fAct = 0;
+    const fVals = [];
+    days.forEach(function (d) {
+      fDue += 1; fSched += d.planned;
+      if (!d.entry) return;
+      fCap += 1;
+      const n = Number(d.entry.assessments || 0);
+      fAct += n; fVals.push(n); dayValues.push(n);
+      revenue += n * charge;
+      contribution += n * contribPer;
+      if (crew > 0) { crewDaySum += n / crew; crewDayN += 1; }
+      // Capture-to-invoice lag, in days.
+      const inv = mobilesState.invoices.find(function (i) { return i.entryId === d.entry.id; });
+      if (inv) {
+        const lag = Math.max(0, Math.round((new Date(inv.date + "T00:00:00") - new Date(d.iso + "T00:00:00")) / 86400000));
+        lagSum += lag; lagN += 1;
+      }
+    });
+    dueDays += fDue; capturedDays += fCap; scheduled += fSched; actual += fAct;
+    const mean = fVals.length ? fAct / fVals.length : 0;
+    const spread = fVals.length > 1
+      ? Math.sqrt(fVals.reduce(function (a, v) { return a + Math.pow(v - mean, 2); }, 0) / fVals.length) : 0;
+    perFleet[f] = { fleet: f, name: mobileName(f), bucket: bucket, crew: crew,
+      dueDays: fDue, capturedDays: fCap, scheduled: fSched, actual: fAct,
+      perDay: mean, spread: spread,
+      consistency: mean > 0 ? Math.max(0, 1 - spread / mean) : null,
+      adherence: fDue ? fCap / fDue : null,
+      achievement: fSched ? fAct / fSched : null,
+      perCrewDay: (crew > 0 && fVals.length) ? mean / crew : null,
+      values: fVals };
+  });
+
+  const mean = dayValues.length ? actual / dayValues.length : 0;
+  const spread = dayValues.length > 1
+    ? Math.sqrt(dayValues.reduce(function (a, v) { return a + Math.pow(v - mean, 2); }, 0) / dayValues.length) : 0;
+  return { perFleet: perFleet, fleets: fleets,
+    dueDays: dueDays, capturedDays: capturedDays, scheduled: scheduled, actual: actual,
+    adherence: dueDays ? capturedDays / dueDays : null,
+    achievement: scheduled ? actual / scheduled : null,
+    perDay: mean, spread: spread,
+    consistency: mean > 0 ? Math.max(0, 1 - spread / mean) : null,
+    perCrewDay: crewDayN ? crewDaySum / crewDayN : null,
+    invoiceLag: lagN ? lagSum / lagN : null,
+    revenue: revenue, contribution: contribution,
+    revPerDay: capturedDays ? revenue / capturedDays : 0,
+    contribPerDay: capturedDays ? contribution / capturedDays : 0 };
+}
+
+function pctBar(v, good) {
+  if (v == null) return '<span style="color:var(--gray);">\u2014</span>';
+  const pct = Math.round(v * 100);
+  const col = v >= (good || 0.9) ? "var(--green)" : v >= (good || 0.9) - 0.15 ? "var(--amber)" : "var(--red)";
+  return '<div style="display:flex; align-items:center; gap:6px; justify-content:flex-end;">' +
+    '<div style="width:60px; height:7px; border-radius:20px; background:var(--line); overflow:hidden;">' +
+    '<div style="width:' + Math.min(100, pct) + '%; height:100%; background:' + col + ';"></div></div>' +
+    '<b style="color:' + col + ';">' + pct + "%</b></div>";
+}
+
+function opsKpi(l, v, sub, bad) {
+  return '<div style="flex:1 1 160px; background:' + (bad ? "var(--amber-bg)" : "var(--light)") + '; border-radius:10px; padding:10px 12px;">' +
+    '<div style="font-size:10px; color:var(--gray); font-weight:500; letter-spacing:1.4px; text-transform:uppercase;">' + l + "</div>" +
+    '<div style="font-family:var(--font-head); font-size:21px; font-weight:700; color:' + (bad ? "#8A6015" : "var(--ink)") + ';">' + v + "</div>" +
+    '<div style="font-size:10.5px; color:var(--gray);">' + sub + "</div></div>";
+}
+
+// One row per mobile, used identically at region and national level.
+function opsMobileTable(o, showRegion) {
+  const rows = o.fleets.map(function (f) {
+    const r = o.perFleet[f];
+    const rk = mobileRec(f).dashRegion;
+    return "<tr>" +
+      '<td style="padding:5px 8px; font-weight:500;">' + r.name +
+        '<div style="font-size:9px; color:var(--gray);">' + (PAYROLL_BUCKET_LABEL[r.bucket] || "untyped") + "</div></td>" +
+      (showRegion ? '<td style="padding:5px 8px; font-size:10.5px;">' + ((mobilesState.regions[rk] || {}).name || "\u2014") + "</td>" : "") +
+      '<td style="padding:5px 8px; text-align:right;">' + r.capturedDays + " / " + r.dueDays + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + pctBar(r.adherence, 1) + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + Math.round(r.actual).toLocaleString("en-ZA") +
+        '<div style="font-size:9px; color:var(--gray);">of ' + Math.round(r.scheduled).toLocaleString("en-ZA") + "</div></td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + pctBar(r.achievement, 0.95) + "</td>" +
+      '<td style="padding:5px 8px; text-align:right; font-weight:700;">' + (r.capturedDays ? Math.round(r.perDay) : "\u2014") + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + (r.perCrewDay == null ? "\u2014" : r.perCrewDay.toFixed(1)) + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + pctBar(r.consistency, 0.8) + "</td></tr>";
+  }).join("");
+  return '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">' +
+    '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Mobile</td>' +
+    (showRegion ? '<td style="padding:5px 8px;">Region</td>' : "") +
+    '<td style="padding:5px 8px; text-align:right;">Days captured</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Adherence</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Assessments</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Achievement</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Per day</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Per crew/day</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Consistency</td></tr></thead><tbody>' +
+    (rows || '<tr><td colspan="' + (showRegion ? 9 : 8) + '" style="padding:10px; color:var(--gray);">No service days in this period.</td></tr>') +
+    '</tbody><tfoot><tr style="background:var(--teal); color:#fff; font-weight:700;">' +
+    '<td style="padding:5px 8px;"' + (showRegion ? ' colspan="2"' : "") + ">TOTAL</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + o.capturedDays + " / " + o.dueDays + "</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + (o.adherence == null ? "\u2014" : Math.round(o.adherence * 100) + "%") + "</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + Math.round(o.actual).toLocaleString("en-ZA") + "</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + (o.achievement == null ? "\u2014" : Math.round(o.achievement * 100) + "%") + "</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + (o.capturedDays ? Math.round(o.perDay) : "\u2014") + "</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + (o.perCrewDay == null ? "\u2014" : o.perCrewDay.toFixed(1)) + "</td>" +
+    '<td style="padding:5px 8px; text-align:right;">' + (o.consistency == null ? "\u2014" : Math.round(o.consistency * 100) + "%") + "</td>" +
+    "</tr></tfoot></table></div>";
+}
+
+function opsHeader(o, scope) {
+  const missing = o.dueDays - o.capturedDays;
+  return '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">' +
+    opsKpi("Schedule adherence", o.adherence == null ? "\u2014" : Math.round(o.adherence * 100) + "%",
+      missing > 0 ? missing + " service day" + (missing === 1 ? "" : "s") + " not captured" : "every day captured", missing > 0) +
+    opsKpi("Achievement", o.achievement == null ? "\u2014" : Math.round(o.achievement * 100) + "%",
+      Math.round(o.actual).toLocaleString("en-ZA") + " of " + Math.round(o.scheduled).toLocaleString("en-ZA") + " scheduled",
+      o.achievement != null && o.achievement < 0.95) +
+    opsKpi("Assessments per day", o.capturedDays ? Math.round(o.perDay) : "\u2014",
+      o.perCrewDay == null ? "" : o.perCrewDay.toFixed(1) + " per crew member") +
+    opsKpi("Consistency", o.consistency == null ? "\u2014" : Math.round(o.consistency * 100) + "%",
+      o.spread ? "\u00b1" + Math.round(o.spread) + " a day" : "steady", o.consistency != null && o.consistency < 0.7) +
+    opsKpi("Contribution per day", fmtR(o.contribPerDay), fmtR(o.revPerDay) + " revenue") +
+    opsKpi("Capture to invoice", o.invoiceLag == null ? "\u2014" : Math.round(o.invoiceLag) + " days",
+      "process lag", o.invoiceLag != null && o.invoiceLag > 5) +
+    "</div>";
+}
+
+function secMobileOpsEfficiency(fleet) {
+  const o = opsFromCaptures([fleet]);
+  const r = o.perFleet[fleet];
+  const man = mobileOpsRow(fleet);
+  // Day-by-day, so a lumpy pattern is visible rather than averaged away.
+  const days = serviceDaysFor(fleet).filter(function (d) { return d.entry; }).slice(-20);
+  const max = days.reduce(function (a, d) { return Math.max(a, Number(d.entry.assessments || 0), d.planned); }, 1);
+  const bars = days.map(function (d) {
+    const n = Number(d.entry.assessments || 0);
+    const h = Math.round((n / max) * 70), ph = Math.round((d.planned / max) * 70);
+    return '<div style="flex:0 0 34px; text-align:center;">' +
+      '<div style="height:72px; display:flex; align-items:flex-end; justify-content:center; gap:2px;">' +
+      '<div title="scheduled ' + Math.round(d.planned) + '" style="width:10px; height:' + ph + 'px; background:var(--line); border-radius:2px 2px 0 0;"></div>' +
+      '<div title="done ' + n + '" style="width:12px; height:' + h + 'px; background:' + (n >= d.planned ? "var(--green)" : "var(--amber)") + '; border-radius:2px 2px 0 0;"></div>' +
+      "</div>" +
+      '<div style="font-size:8.5px; color:var(--gray); margin-top:3px;">' + d.iso.slice(8) + "/" + d.iso.slice(5, 7) + "</div>" +
+      '<div style="font-size:9px; font-weight:700;">' + n + "</div></div>";
+  }).join("");
+
+  return '<div class="card">' +
+    '<div class="eyebrow">' + mobileName(fleet) + "</div><h3>Operational Efficiency</h3>" +
+    '<div class="hint" style="margin-bottom:12px;">Everything here comes from the assessments captured against this mobile\u2019s schedule. <b>Adherence</b> is whether days are being captured at all; <b>achievement</b> is whether the mobile did what it was scheduled to do; <b>consistency</b> shows whether output is steady or lumpy \u2014 an average of 40 hides a mobile swinging between 10 and 70. These roll up unchanged to the region and the Support Office.</div>' +
+    opsHeader(o) +
+    (days.length ? '<div class="section-label">Last ' + days.length + ' captured days \u2014 scheduled against done</div>' +
+      '<div style="display:flex; gap:4px; flex-wrap:wrap; padding:8px 0 4px;">' + bars + "</div>" : "") +
+    '<div class="section-label" style="margin-top:16px;">Alongside the operations feed</div>' +
+    '<div style="font-size:10.5px; font-style:italic; color:var(--gray); margin-bottom:8px;">Hours, satisfaction and journey time are not derivable from a capture \u2014 they come from Scheduley and the operations database. Enter them on Operational Tracking until those feeds are live.</div>' +
+    '<div style="display:flex; gap:10px; flex-wrap:wrap;">' +
+      opsKpi("Hours utilisation", man.util == null ? "awaiting feed" : Math.round(man.util * 100) + "%",
+        (man.actualHours || "\u2014") + " of " + (man.scheduledHours || "\u2014") + " hours", man.util != null && man.util < 0.8) +
+      opsKpi("Client satisfaction", man.satisfaction == null ? "awaiting feed" : man.satisfaction.toFixed(1) + " / 5", "",
+        man.satisfaction != null && man.satisfaction < 4) +
+      opsKpi("Patient journey", man.journeyMinutes == null ? "awaiting feed" : man.journeyMinutes + " min", "average end to end") +
+    "</div></div>";
+}
+
+function secRegionOpsEfficiency(rk) {
+  const fleets = regionMobiles(rk).filter(function (m) { return m.bucket; }).map(function (m) { return m.fleet; });
+  const o = opsFromCaptures(fleets);
+  return '<div class="card">' +
+    '<div class="eyebrow">' + mobilesState.regions[rk].name + "</div><h3>Operational Efficiency \u2014 region</h3>" +
+    '<div class="hint" style="margin-bottom:12px;">The same measures as each mobile, aggregated across the region. Adherence is the one to watch first \u2014 every other number is only as good as the capture behind it.</div>' +
+    opsHeader(o) + opsMobileTable(o, false) + "</div>";
+}
+
+function renderNationalOpsCard() {
+  const fleets = (mobilesState.payroll.fleets || [])
+    .filter(function (f) { return !f.isOverhead && payrollBucketOf(f.vehicleType) && isTradingRegion(f.dashRegion); })
+    .map(function (f) { return f.fleet; });
+  const o = opsFromCaptures(fleets);
+  const regionRows = tradingRegionKeys().map(function (rk) {
+    const rf = regionMobiles(rk).filter(function (m) { return m.bucket; }).map(function (m) { return m.fleet; });
+    if (!rf.length) return "";
+    const r = opsFromCaptures(rf);
+    return "<tr>" +
+      '<td style="padding:5px 8px; font-weight:500;">' + mobilesState.regions[rk].name +
+        '<div style="font-size:9px; color:var(--gray);">' + rf.length + " mobiles \u00b7 " + (rmNameFor(rk) || "no RM") + "</div></td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + r.capturedDays + " / " + r.dueDays + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + pctBar(r.adherence, 1) + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + Math.round(r.actual).toLocaleString("en-ZA") + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + pctBar(r.achievement, 0.95) + "</td>" +
+      '<td style="padding:5px 8px; text-align:right; font-weight:700;">' + (r.capturedDays ? Math.round(r.perDay) : "\u2014") + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + pctBar(r.consistency, 0.8) + "</td>" +
+      '<td style="padding:5px 8px; text-align:right;">' + fmtR(r.contribPerDay) + "</td></tr>";
+  }).join("");
+
+  return '<div class="card">' +
+    '<div class="eyebrow">Guud Mobiles \u2014 Support Office</div><h3>Operational Efficiency \u2014 national</h3>' +
+    '<div class="hint" style="margin-bottom:12px;">Every service day captured across the country, rolled up from the mobiles through the regions. Identical measures at all three levels, from one dataset \u2014 the Support Office sees the same numbers the RM does, which is what makes the comparison worth having.</div>' +
+    opsHeader(o) +
+    '<div class="section-label">By region</div>' +
+    '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:11px;">' +
+    '<thead><tr style="background:var(--ink); color:#fff;"><td style="padding:5px 8px;">Region</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Days captured</td><td style="padding:5px 8px; text-align:right;">Adherence</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Assessments</td><td style="padding:5px 8px; text-align:right;">Achievement</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Per day</td><td style="padding:5px 8px; text-align:right;">Consistency</td>' +
+    '<td style="padding:5px 8px; text-align:right;">Contribution / day</td></tr></thead><tbody>' +
+    (regionRows || '<tr><td colspan="8" style="padding:10px; color:var(--gray);">No regions with mobiles.</td></tr>') +
+    "</tbody></table></div>" +
+    '<div class="section-label" style="margin-top:18px;">Every mobile</div>' +
+    opsMobileTable(o, true) +
+    '<footer class="source-note">Assessment counts will come from Shayela, hours from Scheduley and expenditure from Xero. Until then the captures on each mobile\u2019s schedule are the single source, and everything above derives from them \u2014 so a gap in adherence is a gap in the whole picture, not just one screen.</footer>' +
+    "</div>";
+}
+
 function secMobileWorkCapLedger(fleet) {
   const period = wcPeriod || currentMonthKey();
   const b = wcBatchFor(fleet, period);
@@ -10738,7 +11682,7 @@ function renderRegionDrilldown(rk) {
     else if (sec === "pnl") body = renderRegionOutput(rk) + renderRegionMobilePnLCard(rk);
     else if (sec === "costbudget") body = secRegionCostBudget(rk);
     else if (sec === "forward") body = secRegionForward(rk);
-    else if (sec === "ops") body = secRegionOps(rk);
+    else if (sec === "ops") body = secRegionOpsEfficiency(rk) + secRegionOps(rk);
     else if (sec === "earnings") body = renderRegionEarningsCard(rk);
     else if (sec === "pipeline") body = secRegionPipeline(rk);
     else if (sec === "schedule") body = secRegionSchedule(rk);
@@ -10749,10 +11693,11 @@ function renderRegionDrilldown(rk) {
     else if (sec === "pnl") body = secMobilePnL(f);
     else if (sec === "costbudget") body = secMobileCostBudget(f);
     else if (sec === "forward") body = secMobileForward(f);
+    else if (sec === "invoicing") body = secMobileInvoicing(f);
     else if (sec === "workcap") body = secMobileWorkCapLedger(f) + secMobileWorkCap(f);
     else if (sec === "cashflow") body = secMobileCashflow(f);
-    else if (sec === "ops") body = secMobileOps(f);
-    else if (sec === "schedule") body = secMobileSchedule(f);
+    else if (sec === "ops") body = secMobileOpsEfficiency(f) + secMobileOps(f);
+    else if (sec === "schedule") body = secMobileScheduleCapture(f);
     else if (sec === "approvals") body = secMobileApprovals(f);
     else if (sec === "staffing") body = secMobileStaffing(f);
     else if (sec === "tasks") body = secMobileTasks(f);
@@ -10863,6 +11808,9 @@ function bindRegionDrilldown() {
       renderDashboard();
     });
   });
+
+  bindInvoicing();
+  bindScheduleCapture();
 
   const opsHost = document.querySelector("[data-ops]");
   if (opsHost) {
@@ -12910,7 +13858,9 @@ function renderDashboard() {
   } else if (outputTab === "consolidated") {
     host.innerHTML = renderConsolidatedCard();
   } else if (outputTab === "supportoffice") {
-    host.innerHTML = renderSupportOfficeCard();
+    // The Support Office's own economics, plus the mirror of every sales
+    // invoice the mobiles have raised against it.
+    host.innerHTML = renderNationalOpsCard() + renderSupportOfficeCreditorsCard() + renderSupportOfficeCard();
   } else if (outputTab === "clientpnl") {
     host.innerHTML = renderClientPnLCard();
     bindClientPnLEvents();
